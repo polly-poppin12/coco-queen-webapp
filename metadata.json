@@ -1,0 +1,6 @@
+{
+  "name": "Latam Natural",
+  "description": "A secure, luxurious web application for premium natural, organic beauty and wellness products featuring customer authentication, Airtel and Vodacom Mobile Money checkouts, loyalty rewards, and a comprehensive admin panel.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
