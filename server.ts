@@ -2,6 +2,8 @@ import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import helmet from 'helmet';
+import cors from 'cors';
 import { createServer as createViteServer } from 'vite';
 import * as db from './db';
 
@@ -10,19 +12,83 @@ dotenv.config();
 const app = express();
 const PORT = 3000;
 
-app.disable('x-powered-by');
+// ---- Request ID middleware (tracing) ----
 app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; img-src 'self' https: data:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; script-src 'self'; connect-src 'self'"
-  );
+  const requestId = crypto.randomBytes(8).toString('hex');
+  res.setHeader('X-Request-Id', requestId);
+  (req as any).requestId = requestId;
   next();
 });
+
+// ---- Helmet security headers ----
+// Content-Security-Policy is configured to allow React/Vite inline styles
+// and the external resources the app uses (Google Fonts, Unsplash images).
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        imgSrc: ["'self'", 'https:', 'data:'],
+        styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+        fontSrc: ["'self'", 'https://fonts.gstatic.com'],
+        scriptSrc: ["'self'"],
+        connectSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // needed for Vite HMR in dev
+  })
+);
+
+// ---- CORS ----
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:5173',
+  process.env.APP_URL || '',
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (server-to-server, curl, etc.)
+    if (!origin || allowedOrigins.length === 0 || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error(`Origin ${origin} not allowed by CORS`));
+    }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-HMAC-Signature'],
+}));
+
 app.use(express.json({ limit: '100kb' }));
+
+// ---- HMAC signature verification for sensitive operations ----
+// Helps detect forged or tampered requests by requiring a signature
+// derived from the request body + a server-side secret.
+const HMAC_SECRET = process.env.HMAC_SECRET || crypto.randomBytes(32).toString('hex');
+
+function verifyHmac(req: express.Request): boolean {
+  const signature = req.headers['x-hmac-signature'] as string;
+  if (!signature) return false;
+  const body = JSON.stringify(req.body || {});
+  const expected = crypto
+    .createHmac('sha256', HMAC_SECRET)
+    .update(body)
+    .digest('hex');
+  // Constant-time comparison to prevent timing attacks
+  if (signature.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
+// HMAC enforcement middleware for checkout & payment routes
+const requireHmac = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (process.env.NODE_ENV === 'production' && !verifyHmac(req)) {
+    return res.status(401).json({ error: 'Missing or invalid request signature.' });
+  }
+  next();
+};
 
 // --- SECURITY HELPER FOR PASSWORDS ---
 function hashPassword(password: string, saltInput?: string) {
@@ -480,7 +546,7 @@ app.get('/api/promotions/check/:code', asyncRoute(async (req, res) => {
 }));
 
 // --- CHECKOUT & ORDER ROUTES ---
-app.post('/api/orders/checkout', authenticateUser, asyncRoute(async (req: AuthenticatedRequest, res) => {
+app.post('/api/orders/checkout', authenticateUser, requireHmac, asyncRoute(async (req: AuthenticatedRequest, res) => {
   const { items, discountCode, redeemPoints, shippingAddress, mobileMoney } = req.body;
 
   if (!items || !Array.isArray(items) || items.length === 0) {

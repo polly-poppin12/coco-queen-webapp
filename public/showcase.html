@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Coco Queens — The Collection</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'Inter', sans-serif;
+    background: #0D0D0D;
+    color: #F5F0E8;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+  }
+  ::-webkit-scrollbar { display: none; }
+
+  /* ---- Slide container ---- */
+  .slides-wrapper {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    overflow: hidden;
+  }
+  .slide {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 1;
+  }
+  .slide.active {
+    pointer-events: auto;
+    z-index: 2;
+  }
+  .slide.transitioning {
+    z-index: 3;
+  }
+
+  /* ---- Door panels ---- */
+  .door {
+    position: absolute;
+    top: 0;
+    width: 50%;
+    height: 100%;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    will-change: transform, opacity;
+    transition: none;
+  }
+  .door.left  { left: 0; transform: translateX(0); }
+  .door.right { left: 50%; transform: translateX(0); }
+  .slide.active .door { transition: none; }
+
+  /* Door background/content */
+  .door-inner {
+    position: absolute;
+    top: 0;
+    width: 200%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .door.left .door-inner  { left: 0; }
+  .door.right .door-inner { left: -100%; }
+
+  .door-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    position: absolute;
+    inset: 0;
+  }
+  .door-overlay {
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(13,13,13,0.6) 0%, rgba(13,13,13,0.2) 50%, rgba(212,175,55,0.08) 100%);
+  }
+  .door-content {
+    position: relative;
+    z-index: 2;
+    padding: 4rem;
+    max-width: 520px;
+  }
+
+  /* ---- Hero slide ---- */
+  #slide-hero {
+    z-index: 2;
+    opacity: 1;
+    pointer-events: auto;
+    background: #0D0D0D;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  #slide-hero .hero-bg {
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse at 30% 50%, rgba(212,175,55,0.08) 0%, transparent 60%),
+      radial-gradient(ellipse at 70% 50%, rgba(13,13,13,0.9) 0%, transparent 50%);
+  }
+  .hero-content { position: relative; z-index: 2; max-width: 700px; padding: 2rem; }
+  .hero-content h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(2.5rem, 6vw, 5rem);
+    font-weight: 400;
+    letter-spacing: 0.04em;
+    color: #F5F0E8;
+    line-height: 1.1;
+    margin-bottom: 1rem;
+  }
+  .hero-content h1 em {
+    font-style: italic;
+    color: #D4AF37;
+  }
+  .hero-content p {
+    font-size: clamp(0.8rem, 1.2vw, 1rem);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    color: rgba(245,240,232,0.5);
+    font-weight: 300;
+    margin-bottom: 0.5rem;
+  }
+  .hero-content .tagline {
+    font-size: clamp(0.65rem, 0.9vw, 0.75rem);
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: #D4AF37;
+    font-weight: 600;
+    margin-top: 1.5rem;
+  }
+  .hero-ghost {
+    position: absolute;
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(6rem, 15vw, 12rem);
+    font-weight: 400;
+    font-style: italic;
+    color: rgba(212,175,55,0.04);
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  /* ---- Product slide details ---- */
+  .product-category {
+    font-size: 0.6rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #D4AF37;
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
+  .product-name {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(1.5rem, 3vw, 2.8rem);
+    font-weight: 400;
+    color: #F5F0E8;
+    line-height: 1.2;
+    margin-bottom: 0.75rem;
+  }
+  .product-price {
+    font-size: clamp(1.2rem, 2vw, 1.8rem);
+    font-weight: 700;
+    color: #D4AF37;
+    font-family: 'DM Serif Display', serif;
+    margin-bottom: 1rem;
+  }
+  .product-desc {
+    font-size: clamp(0.7rem, 1vw, 0.85rem);
+    line-height: 1.7;
+    color: rgba(245,240,232,0.65);
+    max-width: 380px;
+  }
+  .product-stock {
+    display: inline-block;
+    margin-top: 1.5rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    padding: 0.4rem 1rem;
+    border: 1px solid rgba(212,175,55,0.3);
+    color: rgba(245,240,232,0.7);
+    font-weight: 500;
+  }
+
+  /* ---- Coming Soon slide ---- */
+  #slide-coming {
+    background: #0D0D0D;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .coming-soon-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+    max-width: 900px;
+    width: 90%;
+    padding: 2rem;
+  }
+  @media (max-width: 640px) {
+    .coming-soon-grid { grid-template-columns: 1fr; gap: 1.5rem; }
+  }
+  .coming-card {
+    border: 1px solid rgba(212,175,55,0.15);
+    padding: 2.5rem 1.5rem;
+    text-align: center;
+    background: rgba(255,255,255,0.02);
+    transition: all 0.4s ease;
+  }
+  .coming-card:hover {
+    border-color: rgba(212,175,55,0.4);
+    background: rgba(212,175,55,0.04);
+  }
+  .coming-card .icon { font-size: 2rem; margin-bottom: 1rem; opacity: 0.3; }
+  .coming-card h3 {
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.1rem;
+    font-weight: 400;
+    color: #F5F0E8;
+    margin-bottom: 0.5rem;
+  }
+  .coming-card p {
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(245,240,232,0.35);
+    font-weight: 500;
+  }
+  .coming-badge {
+    display: inline-block;
+    margin-top: 1rem;
+    font-size: 0.55rem;
+    letter-spacing: 0.25em;
+    padding: 0.3rem 0.8rem;
+    border: 1px solid rgba(245,240,232,0.15);
+    color: rgba(245,240,232,0.4);
+  }
+
+  /* ---- Closing slide ---- */
+  #slide-closing {
+    background: #0D0D0D;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+  }
+  .closing-content { position: relative; z-index: 2; }
+  .closing-content .crown {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    opacity: 0.3;
+  }
+  .closing-content h2 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(2rem, 5vw, 4rem);
+    font-weight: 400;
+    font-style: italic;
+    color: #F5F0E8;
+    margin-bottom: 0.75rem;
+  }
+  .closing-content p {
+    font-size: 0.7rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: rgba(245,240,232,0.35);
+    font-weight: 500;
+  }
+
+  /* ---- Nav dots ---- */
+  .nav-dots {
+    position: fixed;
+    top: 50%;
+    right: 2rem;
+    transform: translateY(-50%);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .nav-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    border: 1px solid rgba(245,240,232,0.3);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  .nav-dot.active {
+    background: #D4AF37;
+    border-color: #D4AF37;
+    box-shadow: 0 0 12px rgba(212,175,55,0.3);
+    transform: scale(1.3);
+  }
+  .nav-dot:hover {
+    border-color: rgba(212,175,55,0.6);
+  }
+
+  /* ---- Scroll indicator ---- */
+  .scroll-indicator {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.5rem;
+    opacity: 0.5;
+    animation: fadeInOut 2s ease-in-out infinite;
+  }
+  .scroll-indicator span {
+    font-size: 0.55rem;
+    letter-spacing: 0.25em;
+    text-transform: uppercase;
+    color: rgba(245,240,232,0.4);
+  }
+  .scroll-indicator .mouse {
+    width: 18px;
+    height: 28px;
+    border: 1.5px solid rgba(245,240,232,0.3);
+    border-radius: 10px;
+    position: relative;
+  }
+  .scroll-indicator .mouse::after {
+    content: '';
+    position: absolute;
+    top: 5px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2px;
+    height: 6px;
+    background: rgba(245,240,232,0.5);
+    border-radius: 2px;
+    animation: scrollWheel 1.5s ease-in-out infinite;
+  }
+  @keyframes scrollWheel {
+    0%, 100% { transform: translateX(-50%) translateY(0); opacity: 1; }
+    50% { transform: translateX(-50%) translateY(6px); opacity: 0.3; }
+  }
+  @keyframes fadeInOut {
+    0%, 100% { opacity: 0.3; }
+    50% { opacity: 0.7; }
+  }
+
+  /* ---- Logo top left ---- */
+  .site-logo {
+    position: fixed;
+    top: 2rem;
+    left: 2.5rem;
+    z-index: 100;
+    font-family: 'DM Serif Display', serif;
+    font-size: 1.1rem;
+    font-style: italic;
+    color: #D4AF37;
+    letter-spacing: 0.08em;
+    pointer-events: none;
+  }
+  .site-logo span {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.5rem;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    display: block;
+    color: rgba(245,240,232,0.3);
+    font-weight: 400;
+    margin-top: 0.15rem;
+  }
+</style>
+</head>
+<body>
+
+<div class="site-logo">Coco Queens<span>Coconut Beauty Rituals</span></div>
+
+<div class="nav-dots" id="navDots"></div>
+
+<div class="scroll-indicator" id="scrollIndicator">
+  <div class="mouse"></div>
+  <span>Scroll</span>
+</div>
+
+<div class="slides-wrapper" id="slidesWrapper">
+
+  <!-- SLIDE 0: HERO -->
+  <div class="slide active" data-index="0" id="slide-hero">
+    <div class="hero-bg"></div>
+    <div class="hero-ghost">queen</div>
+    <div class="hero-content">
+      <p>Premium Coconut Beauty</p>
+      <h1>Crowned in Gold,<br><em>Rooted in Coconut</em></h1>
+      <div class="tagline">Extra Virgin Oil · Exfoliating Scrub · Raw Honey · Essential Oils</div>
+    </div>
+  </div>
+
+  <!-- SLIDE 1: COCONUT OIL -->
+  <div class="slide" data-index="1">
+    <div class="door left" data-door="1-left">
+      <div class="door-inner">
+        <img class="door-image" src="/products/coco-queens-coconut-oil.jpg" alt="Coco Queens Extra Virgin Coconut Oil">
+        <div class="door-overlay"></div>
+      </div>
+    </div>
+    <div class="door right" data-door="1-right">
+      <div class="door-inner">
+        <div class="door-content">
+          <div class="product-category">Oil</div>
+          <h2 class="product-name">Extra Virgin<br>Coconut Oil</h2>
+          <div class="product-price">TZS 10,000</div>
+          <p class="product-desc">A clear, lightweight oil for daily skin glow, hair shine, scalp comfort and total wellness rituals. Cold-pressed and pure.</p>
+          <div class="product-stock">In Stock · Free Shipping</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 2: COCONUT SCRUB -->
+  <div class="slide" data-index="2">
+    <div class="door left" data-door="2-left">
+      <div class="door-inner">
+        <div class="door-content">
+          <div class="product-category">Scrub</div>
+          <h2 class="product-name">Exfoliating<br>Coconut Scrub</h2>
+          <div class="product-price">TZS 30,000</div>
+          <p class="product-desc">A creamy coconut scrub for polished skin, soft touch and a brighter looking body-care ritual. Buffs dull surface buildup.</p>
+          <div class="product-stock">In Stock · Free Shipping</div>
+        </div>
+      </div>
+    </div>
+    <div class="door right" data-door="2-right">
+      <div class="door-inner">
+        <img class="door-image" src="/products/coco-queens-scrub.jpg" alt="Coco Queens Exfoliating Coconut Scrub">
+        <div class="door-overlay"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 3: HONEY -->
+  <div class="slide" data-index="3">
+    <div class="door left" data-door="3-left">
+      <div class="door-inner">
+        <img class="door-image" src="/products/coco-queens-honey.jpg" alt="Coco Queens Pure Raw Honey">
+        <div class="door-overlay"></div>
+      </div>
+    </div>
+    <div class="door right" data-door="3-right">
+      <div class="door-inner">
+        <div class="door-content">
+          <div class="product-category">Honey</div>
+          <h2 class="product-name">Pure Raw<br>Honey</h2>
+          <div class="product-price">TZS 22,000</div>
+          <p class="product-desc">Golden raw honey for glow rituals, softening masks and natural wellness routines. Helps skin feel supple and dewy.</p>
+          <div class="product-stock">In Stock · Free Shipping</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 4: ESSENTIAL OILS -->
+  <div class="slide" data-index="4">
+    <div class="door left" data-door="4-left">
+      <div class="door-inner">
+        <div class="door-content">
+          <div class="product-category">Essential Oils</div>
+          <h2 class="product-name">Essential<br>Oils</h2>
+          <div class="product-price">TZS 18,000</div>
+          <p class="product-desc">A warm aromatic oil ritual for calm evenings, body massage and beautifully scented care moments. Coconut oil base.</p>
+          <div class="product-stock">In Stock · Free Shipping</div>
+        </div>
+      </div>
+    </div>
+    <div class="door right" data-door="4-right">
+      <div class="door-inner">
+        <img class="door-image" src="/products/coco-queens-essential-oil.jpg" alt="Coco Queens Essential Oils">
+        <div class="door-overlay"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 5: COMING SOON -->
+  <div class="slide" data-index="5" id="slide-coming">
+    <div style="text-align:center;margin-bottom:2.5rem;width:100%;">
+      <p style="font-size:0.6rem;letter-spacing:0.3em;text-transform:uppercase;color:#D4AF37;font-weight:600;margin-bottom:0.75rem;">Coming Soon</p>
+      <h2 style="font-family:'DM Serif Display',serif;font-size:clamp(1.5rem,3vw,2.5rem);font-weight:400;color:#F5F0E8;">New Rituals on the Horizon</h2>
+    </div>
+    <div class="coming-soon-grid">
+      <div class="coming-card">
+        <div class="icon">✦</div>
+        <h3>Body Butter</h3>
+        <p>Deep moisture coconut whip</p>
+        <div class="coming-badge">Coming Soon</div>
+      </div>
+      <div class="coming-card">
+        <div class="icon">✦</div>
+        <h3>Hair Repair Mask</h3>
+        <p>Intensive coconut protein treatment</p>
+        <div class="coming-badge">Coming Soon</div>
+      </div>
+      <div class="coming-card">
+        <div class="icon">✦</div>
+        <h3>Royal Glow Serum</h3>
+        <p>Vitamin-enriched face oil</p>
+        <div class="coming-badge">Coming Soon</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SLIDE 6: CLOSING -->
+  <div class="slide" data-index="6" id="slide-closing">
+    <div class="closing-content">
+      <div class="crown">♛</div>
+      <h2>Coco Queens</h2>
+      <p>Comfortable Beauty for Real Life</p>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const slides = document.querySelectorAll('.slide');
+  const wrapper = document.getElementById('slidesWrapper');
+  const navDots = document.getElementById('navDots');
+  const scrollIndicator = document.getElementById('scrollIndicator');
+  const TOTAL = slides.length;
+
+  let currentIndex = 0;
+  let isTransitioning = false;
+  let scrollAccumulator = 0;
+  const SCROLL_THRESHOLD = 300; // pixels of scroll per full transition
+  let touchStartY = 0;
+
+  // ---- Build nav dots ----
+  for (let i = 0; i < TOTAL; i++) {
+    const dot = document.createElement('button');
+    dot.className = 'nav-dot' + (i === 0 ? ' active' : '');
+    dot.dataset.index = i;
+    dot.addEventListener('click', () => goToSlide(i));
+    navDots.appendChild(dot);
+  }
+
+  // ---- Get doors for a slide ----
+  function getDoors(index) {
+    const slide = slides[index];
+    if (!slide) return { left: null, right: null };
+    return {
+      left: slide.querySelector('.door.left'),
+      right: slide.querySelector('.door.right'),
+    };
+  }
+
+  // ---- Set door transform based on fraction (0=closed, 1=open) ----
+  function setDoorProgress(slide, frac) {
+    const doors = getDoors(parseInt(slide.dataset.index));
+    const clamped = Math.max(0, Math.min(1, frac));
+    // Left door slides left: translateX(-50% * (1-frac))
+    // Right door slides right: translateX(50% * (1-frac))
+    if (doors.left) {
+      doors.left.style.transform = `translateX(${-50 * (1 - clamped)}%)`;
+      doors.left.style.opacity = clamped < 0.3 ? 0 : Math.min(1, (clamped - 0.3) / 0.7);
+    }
+    if (doors.right) {
+      doors.right.style.transform = `translateX(${50 * (1 - clamped)}%)`;
+      doors.right.style.opacity = clamped < 0.3 ? 0 : Math.min(1, (clamped - 0.3) / 0.7);
+    }
+  }
+
+  // ---- Reset slide to fully open or closed ----
+  function resetSlide(index, open) {
+    const slide = slides[index];
+    if (!slide) return;
+    const frac = open ? 1 : 0;
+    // For hero, coming-soon, closing — just set opacity
+    if (index === 0 || index === 5 || index === 6) {
+      slide.style.opacity = open ? '1' : '0';
+      slide.style.pointerEvents = open ? 'auto' : 'none';
+      return;
+    }
+    // For product slides with doors
+    slide.style.opacity = '1';
+    slide.style.pointerEvents = open ? 'auto' : 'none';
+    slide.classList.toggle('active', open);
+    setDoorProgress(slide, frac);
+  }
+
+  // ---- Show slide at index (instant, no transition) ----
+  function showSlide(index) {
+    slides.forEach((s, i) => {
+      const isActive = i === index;
+      s.classList.toggle('active', isActive);
+      s.style.zIndex = isActive ? '2' : '1';
+      if (i === 0 || i === 5 || i === 6) {
+        s.style.opacity = isActive ? '1' : '0';
+        s.style.pointerEvents = isActive ? 'auto' : 'none';
+      } else {
+        s.style.opacity = '1';
+        s.style.pointerEvents = isActive ? 'auto' : 'none';
+        setDoorProgress(s, isActive ? 1 : 0);
+      }
+    });
+    updateDots(index);
+    currentIndex = index;
+    scrollAccumulator = 0;
+  }
+
+  // ---- Transition between slides with scroll scrub ----
+  function transitionTo(newIndex, direction) {
+    if (isTransitioning || newIndex === currentIndex) return;
+    if (newIndex < 0 || newIndex >= TOTAL) return;
+
+    isTransitioning = true;
+    scrollIndicator.style.display = 'none';
+
+    const from = currentIndex;
+    const to = newIndex;
+
+    // Set up the outgoing slide
+    const fromSlide = slides[from];
+    const toSlide = slides[to];
+
+    // Position the incoming slide behind/ready
+    toSlide.style.zIndex = '3';
+    toSlide.style.opacity = '1';
+    toSlide.style.pointerEvents = 'auto';
+    toSlide.classList.add('transitioning');
+
+    // For door slides: start incoming closed, outgoing open
+    if (from !== 0 && from !== 5 && from !== 6) {
+      setDoorProgress(fromSlide, 1); // fully open
+    } else {
+      fromSlide.style.opacity = '1';
+    }
+    if (to !== 0 && to !== 5 && to !== 6) {
+      setDoorProgress(toSlide, 0); // fully closed
+    } else {
+      toSlide.style.opacity = '0';
+    }
+
+    // Animate: close outgoing, open incoming
+    let startTime = null;
+    const DURATION = 800; // ms
+
+    function animate(timestamp) {
+      if (!startTime) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const progress = Math.min(elapsed / DURATION, 1);
+      // Ease in-out
+      const ease = progress < 0.5
+        ? 4 * progress * progress * progress
+        : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+
+      // Close outgoing doors
+      if (from !== 0 && from !== 5 && from !== 6) {
+        setDoorProgress(fromSlide, 1 - ease);
+        fromSlide.style.opacity = ease < 0.5 ? '1' : `${2 * (1 - ease)}`;
+      } else {
+        fromSlide.style.opacity = `${1 - ease}`;
+      }
+      fromSlide.style.pointerEvents = 'none';
+
+      // Open incoming doors
+      if (to !== 0 && to !== 5 && to !== 6) {
+        setDoorProgress(toSlide, ease);
+        toSlide.style.opacity = ease > 0.2 ? `${Math.min(1, (ease - 0.2) / 0.8)}` : '0';
+      } else {
+        toSlide.style.opacity = `${ease}`;
+      }
+      toSlide.style.pointerEvents = 'auto';
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        // Finalize
+        fromSlide.classList.remove('active');
+        fromSlide.style.zIndex = '1';
+        fromSlide.classList.remove('transitioning');
+        toSlide.style.zIndex = '2';
+        toSlide.classList.add('active');
+        toSlide.classList.remove('transitioning');
+
+        if (from !== 0 && from !== 5 && from !== 6) {
+          setDoorProgress(fromSlide, 0);
+        }
+        if (to !== 0 && to !== 5 && to !== 6) {
+          setDoorProgress(toSlide, 1);
+        }
+
+        currentIndex = to;
+        updateDots(to);
+        isTransitioning = false;
+        scrollAccumulator = 0;
+      }
+    }
+
+    requestAnimationFrame(animate);
+  }
+
+  // ---- Go to a specific slide instantly ----
+  function goToSlide(index) {
+    if (index === currentIndex) return;
+    if (isTransitioning) return;
+    transitionTo(index, index > currentIndex ? 1 : -1);
+  }
+
+  // ---- Update dots ----
+  function updateDots(index) {
+    document.querySelectorAll('.nav-dot').forEach((dot, i) => {
+      dot.classList.toggle('active', i === index);
+    });
+  }
+
+  // ---- Scroll handler ----
+  function handleWheel(e) {
+    if (isTransitioning) return;
+    e.preventDefault();
+
+    scrollAccumulator += Math.abs(e.deltaY);
+    const direction = e.deltaY > 0 ? 1 : -1;
+
+    if (scrollAccumulator >= SCROLL_THRESHOLD) {
+      const target = currentIndex + direction;
+      if (target >= 0 && target < TOTAL) {
+        transitionTo(target, direction);
+      }
+      scrollAccumulator = 0;
+    }
+  }
+
+  // ---- Touch handlers ----
+  function handleTouchStart(e) {
+    touchStartY = e.touches[0].clientY;
+  }
+  function handleTouchEnd(e) {
+    if (isTransitioning) return;
+    const diff = touchStartY - e.changedTouches[0].clientY;
+    if (Math.abs(diff) < 50) return;
+    const direction = diff > 0 ? 1 : -1;
+    const target = currentIndex + direction;
+    if (target >= 0 && target < TOTAL) {
+      transitionTo(target, direction);
+    }
+  }
+
+  // ---- Keyboard handler ----
+  function handleKey(e) {
+    if (isTransitioning) return;
+    let direction = 0;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') direction = 1;
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') direction = -1;
+    else return;
+
+    e.preventDefault();
+    const target = currentIndex + direction;
+    if (target >= 0 && target < TOTAL) {
+      transitionTo(target, direction);
+    }
+  }
+
+  // ---- Attach events ----
+  wrapper.addEventListener('wheel', handleWheel, { passive: false });
+  wrapper.addEventListener('touchstart', handleTouchStart, { passive: true });
+  wrapper.addEventListener('touchend', handleTouchEnd, { passive: true });
+  window.addEventListener('keydown', handleKey);
+
+  // ---- Init ----
+  showSlide(0);
+
+})();
+</script>
+</body>
+</html>
