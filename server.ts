@@ -1,16 +1,20 @@
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import crypto from 'crypto';
-import dotenv from 'dotenv';
 import helmet from 'helmet';
 import cors from 'cors';
-import { createServer as createViteServer } from 'vite';
 import * as db from './db';
-
-dotenv.config();
+import Stripe from 'stripe';
 
 const app = express();
 const PORT = 3000;
+
+// ---- Stripe Configuration ----
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
+const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
+const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 
 // ---- Request ID middleware (tracing) ----
 app.use((req, res, next) => {
@@ -21,8 +25,6 @@ app.use((req, res, next) => {
 });
 
 // ---- Helmet security headers ----
-// Content-Security-Policy is configured to allow React/Vite inline styles
-// and the external resources the app uses (Google Fonts, Unsplash images).
 app.use(
   helmet({
     contentSecurityPolicy: {
@@ -31,13 +33,14 @@ app.use(
         imgSrc: ["'self'", 'https:', 'data:'],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-        scriptSrc: ["'self'"],
-        connectSrc: ["'self'"],
+        scriptSrc: ["'self'", "'unsafe-inline'", 'https://js.stripe.com', 'https://js.stripe.com/v3'],
+        frameSrc: ["'self'", 'https://js.stripe.com', 'https://hooks.stripe.com'],
+        connectSrc: ["'self'", 'https://api.stripe.com'],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: [],
       },
     },
-    crossOriginEmbedderPolicy: false, // needed for Vite HMR in dev
+    crossOriginEmbedderPolicy: false,
   })
 );
 
@@ -887,30 +890,90 @@ app.get('/api/profile/gdpr-export', authenticateUser, asyncRoute(async (req: Aut
   });
 }));
 
-// Static files and SPA serving
-async function startServer() {
-  // Idempotent — safe to run on every boot. Will throw a clear error at
-  // startup (instead of letting users hit unrecoverable random passwords)
-  // if OWNER_BOOTSTRAP_PASSWORD / ADMIN_BOOTSTRAP_PASSWORD are not set.
-  await db.seedIfEmpty();
+// ---- CONFIG ENDPOINT (stripe publishable key, etc.) ----
+app.get('/api/config', asyncRoute(async (req, res) => {
+  res.json({
+    stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+  });
+}));
 
-  if (process.env.NODE_ENV !== 'production') {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: 'spa',
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+// ---- STRIPE PAYMENT ENDPOINT ----
+app.post('/api/stripe/create-checkout-session', authenticateUser, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  if (!stripe) {
+    return res.status(503).json({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY in .env' });
+  }
+
+  const { items } = req.body;
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Cart is empty.' });
+  }
+
+  // Validate items against database
+  const lineItems: Array<{ price_data: any; quantity: number }> = [];
+  for (const item of items) {
+    if (!item.productId || !item.name || !item.price || !item.quantity) {
+      return res.status(400).json({ error: `Invalid item: ${item.name || 'unknown'}` });
+    }
+    const product = await db.getProductById(item.productId).catch(() => null);
+    // Convert TZS to USD cents (rate: 2500 TZS = 1 USD)
+    const usdCents = Math.round(item.price / 2500 * 100);
+    lineItems.push({
+      price_data: {
+        currency: 'usd',
+        product_data: {
+          name: product?.name || item.name,
+          description: product?.description || '',
+        },
+        unit_amount: Math.max(usdCents, 50), // minimum 50 cents
+      },
+      quantity: Math.min(Math.max(1, item.quantity), 20),
     });
   }
 
+  try {
+    const session = await stripe!.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: lineItems,
+      success_url: `${APP_URL}?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${APP_URL}`,
+      shipping_address_collection: { allowed_countries: ['TZ'] },
+      metadata: {
+        user_id: req.user?.id || 'guest',
+        user_email: req.user?.email || 'guest',
+      },
+    });
+
+    res.json({ sessionId: session.id, url: session.url });
+  } catch (err: any) {
+    console.error('Stripe session creation failed:', err);
+    res.status(500).json({ error: err.message || 'Failed to create payment session' });
+  }
+}));
+
+// ---- STATIC FILES & SPA SERVING ----
+// Serve public/ for static assets (images, etc.)
+app.use(express.static(path.join(process.cwd(), 'public')));
+
+// SPA fallback: serve index.html for all non-API routes
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) return next();
+  res.sendFile(path.join(process.cwd(), 'index.html'));
+});
+
+async function startServer() {
+  // Start listening first (so the page is served immediately even if DB is cold)
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Coco Queens server listening on port ${PORT}`);
+    if (!STRIPE_SECRET_KEY) console.warn('⚠️  STRIPE_SECRET_KEY not set — payments will be unavailable');
   });
+
+  // Then seed the database (may be slow on cold Neon start)
+  try {
+    await db.seedIfEmpty();
+  } catch (err: any) {
+    console.error('Database seed failed (non-fatal):', err.message);
+  }
 }
 
 startServer().catch((err) => {
