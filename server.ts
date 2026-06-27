@@ -8,7 +8,7 @@ import * as db from './db';
 import Stripe from 'stripe';
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // ---- Stripe Configuration ----
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';

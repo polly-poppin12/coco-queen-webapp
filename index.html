@@ -1149,7 +1149,7 @@ function addToCart(product, qty = 1) {
   if (existing) {
     existing.qty += qty;
   } else {
-    cart.push({ id: product.id, name: product.name, price: product.price, qty, image: product.image || '' });
+    cart.push({ id: product.id, name: product.name, price: product.price, qty, image: product.image || (Array.isArray(product.images) && product.images[0]) || '' });
   }
   saveCart();
   showAddPopup(product, qty);
@@ -1248,14 +1248,26 @@ function getFallbackProducts() {
   ];
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  PRODUCT IMAGE FALLBACK
+// ═══════════════════════════════════════════════════════════════
+function onProdImgError(imgEl) {
+  const placeholder = document.createElement('div');
+  placeholder.className = 'prod-img-placeholder';
+  placeholder.textContent = imgEl.dataset.name || '';
+  imgEl.replaceWith(placeholder);
+}
+
 function renderProducts(prods) {
   if (!prods || prods.length === 0) prods = getFallbackProducts();
 
-  productsContainer.innerHTML = prods.map((p, i) => `
+  productsContainer.innerHTML = prods.map((p, i) => {
+    const imgSrc = p.image || (Array.isArray(p.images) && p.images[0]) || '';
+    return `
     <div class="product-panel" id="p${i + 1}">
       <div class="product-visual">
-        ${p.image
-          ? `<img class="prod-img" src="${p.image}" alt="${p.name}" loading="lazy"/>`
+        ${imgSrc
+          ? `<img class="prod-img" src="${imgSrc}" alt="${p.name}" loading="lazy" data-name="${p.name}" onerror="onProdImgError(this)"/>`
           : `<div class="prod-img-placeholder">${p.name}</div>`
         }
       </div>
@@ -1287,7 +1299,8 @@ function renderProducts(prods) {
       </div>
     </div>
     ${i < prods.length - 1 ? '<div class="prod-divider"></div>' : ''}
-  `).join('');
+  `;
+  }).join('');
 
   observeSections();
 
