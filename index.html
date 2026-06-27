@@ -8,7 +8,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet"/>
 <!-- Stripe.js -->
-<script src="https://js.stripe.com/v3/"></script>
+<script nonce="__NONCE__" src="https://js.stripe.com/v3/"></script>
+<!-- DOMPurify: XSS sanitization [M2] -->
+<script nonce="__NONCE__" src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.2.4/purify.min.js" integrity="sha512-L4N1oUW5p4VFHUnI3GdXRhJZFYL5BPFNSU0wQDAXfFiNCmFxUGQqB+E3qFhLCsOFr3qKZMr6A5MJ/PqQTFYvqA==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
 :root{
@@ -877,7 +879,7 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
 <!-- ═══════ TOAST CONTAINER ═══════ -->
 <div class="toast-container" id="toastContainer"></div>
 
-<script>
+<script nonce="__NONCE__">
 /* ==============================================================
    COCO QUEENS — Frontend Application
    ============================================================== */
@@ -886,6 +888,17 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
 const API_BASE = '';
 let STRIPE_PUBLISHABLE_KEY = null;
 let stripe = null;
+
+// ─── XSS Sanitizer [M2] ───
+function sanitizeHtml(str) {
+  if (!str) return '';
+  if (typeof DOMPurify !== 'undefined' && DOMPurify.sanitize) {
+    return DOMPurify.sanitize(str, { ALLOWED_TAGS: [], ALLOWED_ATTR: [] });
+  }
+  // Fallback: escape HTML entities
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
+  return String(str).replace(/[&<>"']/g, c => map[c]);
+}
 
 // ─── State ───
 let currentUser = null;
@@ -1267,7 +1280,7 @@ function renderProducts(prods) {
     <div class="product-panel" id="p${i + 1}">
       <div class="product-visual">
         ${imgSrc
-          ? `<img class="prod-img" src="${imgSrc}" alt="${p.name}" loading="lazy" data-name="${p.name}" onerror="onProdImgError(this)"/>`
+          ? `<img class="prod-img" src="${imgSrc}" alt="${p.name}" loading="lazy" data-name="${p.name}"/>`
           : `<div class="prod-img-placeholder">${p.name}</div>`
         }
       </div>
@@ -1282,9 +1295,9 @@ function renderProducts(prods) {
         </div>
         <div class="qty-row">
           <span class="qty-label">Qty</span>
-          <button class="qty-btn" onclick="adjustQty(this, -1, '${p.id}')">−</button>
+          <button class="qty-btn" data-qty-id="${p.id}" data-qty-delta="-1">−</button>
           <span class="qty-val" id="qty-${p.id}">1</span>
-          <button class="qty-btn" onclick="adjustQty(this, 1, '${p.id}')">+</button>
+          <button class="qty-btn" data-qty-id="${p.id}" data-qty-delta="1">+</button>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
           <button class="prod-btn" data-add-id="${p.id}">
@@ -1303,6 +1316,11 @@ function renderProducts(prods) {
   }).join('');
 
   observeSections();
+
+  // ─── Attach error listeners to images (replaces inline onerror) ───
+  document.querySelectorAll('.prod-img').forEach(img => {
+    img.addEventListener('error', () => onProdImgError(img));
+  });
 
   // ─── EVENT DELEGATION: one listener catches all clicks ───
   productsContainer.onclick = function(e) {
@@ -1329,6 +1347,19 @@ function renderProducts(prods) {
       doStripeCheckout([{ productId: prod.id, name: prod.name, price: prod.price, quantity: qty }]);
       return;
     }
+    // Qty buttons (replaces inline onclick)
+    const qtyBtn = e.target.closest('[data-qty-id]');
+    if (qtyBtn) {
+      const id = qtyBtn.getAttribute('data-qty-id');
+      const delta = parseInt(qtyBtn.getAttribute('data-qty-delta') || '0');
+      const val = document.getElementById('qty-' + id);
+      if (!val) return;
+      let v = parseInt(val.textContent) + delta;
+      if (v < 1) v = 1;
+      if (v > 20) v = 20;
+      val.textContent = v;
+      return;
+    }
   };
 
   // Re-attach cursor listeners
@@ -1338,15 +1369,6 @@ function renderProducts(prods) {
       el.addEventListener('mouseleave', () => cur.classList.remove('big'));
     });
   }
-}
-
-function adjustQty(btn, delta, id) {
-  const val = document.getElementById('qty-' + id);
-  if (!val) return;
-  let v = parseInt(val.textContent) + delta;
-  if (v < 1) v = 1;
-  if (v > 20) v = 20;
-  val.textContent = v;
 }
 
 // ═══════════════════════════════════════════════════════════════

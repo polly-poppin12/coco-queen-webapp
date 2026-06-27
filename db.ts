@@ -14,6 +14,7 @@
 
 import { Pool } from 'pg';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 
 if (!process.env.DATABASE_URL) {
   throw new Error(
@@ -800,13 +801,60 @@ export async function listAuditLogs(limit = 200) {
 // never duplicate or reset data.
 // ----------------------------------------------------------------
 
-function hashPasswordForSeed(password: string, saltInput?: string) {
-  const salt = saltInput || crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-  return { hash, salt };
+function hashPasswordForSeed(password: string, _saltInput?: string) {
+  const hash = bcrypt.hashSync(password, 12);
+  return { hash, salt: '' };
+}
+
+// -----------------------------------------------------------
+// RATE LIMITER [H5] — Postgres-backed, survives restarts
+// -----------------------------------------------------------
+export async function checkRateLimit(key: string, maxRequests: number, windowMs: number): Promise<boolean> {
+  const now = new Date();
+  const { rows } = await pool.query(
+    `INSERT INTO rate_limiter (key, count, reset_at)
+     VALUES ($1, 1, $2)
+     ON CONFLICT (key) DO UPDATE
+       SET count = CASE
+         WHEN rate_limiter.reset_at < $3 THEN 1
+         ELSE rate_limiter.count + 1
+       END,
+       reset_at = CASE
+         WHEN rate_limiter.reset_at < $3 THEN $4
+         ELSE rate_limiter.reset_at
+       END
+     RETURNING count, reset_at`,
+    [key, new Date(now.getTime() + windowMs), now, new Date(now.getTime() + windowMs)]
+  );
+  const row = rows[0];
+  if (!row) return true; // allow if insert failed
+  // Clean up old entries periodically
+  if (Math.random() < 0.1) {
+    pool.query('DELETE FROM rate_limiter WHERE reset_at < NOW()').catch(() => {});
+  }
+  return Number(row.count) <= maxRequests;
+}
+
+// Ensure the rate_limiter table exists (for environments where schema.sql hasn't been run)
+export async function ensureRateLimiterTable(): Promise<void> {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_limiter (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 1,
+      reset_at TIMESTAMPTZ NOT NULL
+    )
+  `);
 }
 
 export async function seedIfEmpty() {
+  // Ensure rate_limiter table exists [H5]
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rate_limiter (
+      key TEXT PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 1,
+      reset_at TIMESTAMPTZ NOT NULL
+    )
+  `).catch(() => {});
   const { rows: userCountRows } = await pool.query('SELECT COUNT(*) FROM users');
   const userCount = parseInt(userCountRows[0].count, 10);
 

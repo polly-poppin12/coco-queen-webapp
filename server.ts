@@ -1,9 +1,11 @@
 import 'dotenv/config';
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import crypto from 'crypto';
 import helmet from 'helmet';
 import cors from 'cors';
+import bcrypt from 'bcryptjs';
 import * as db from './db';
 import Stripe from 'stripe';
 
@@ -24,6 +26,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// ---- Nonce generator for CSP [H1] — MUST run before Helmet ----
+app.use((req, res, next) => {
+  res.locals.nonce = crypto.randomBytes(16).toString('base64url');
+  next();
+});
+
 // ---- Helmet security headers ----
 app.use(
   helmet({
@@ -33,11 +41,17 @@ app.use(
         imgSrc: ["'self'", 'https:', 'data:'],
         styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
         fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-        scriptSrc: ["'self'", "'unsafe-inline'", 'https://js.stripe.com', 'https://js.stripe.com/v3'],
+        scriptSrc: [
+          "'self'",
+          (req: any, res: any) => `'nonce-${res.locals.nonce}'`,
+          'https://js.stripe.com',
+          'https://js.stripe.com/v3',
+        ],
+        scriptSrcAttr: ["'unsafe-inline'"],
         frameSrc: ["'self'", 'https://js.stripe.com', 'https://hooks.stripe.com'],
         connectSrc: ["'self'", 'https://api.stripe.com'],
         objectSrc: ["'none'"],
-        upgradeInsecureRequests: [],
+        "upgrade-insecure-requests": null,
       },
     },
     crossOriginEmbedderPolicy: false,
@@ -64,6 +78,53 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-HMAC-Signature'],
 }));
+
+// ---- Stripe Webhook [M3] ----
+// MUST come before express.json() — Stripe needs the raw body to verify
+// the webhook signature.
+app.post('/api/stripe/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig = req.headers['stripe-signature'] as string;
+  if (!sig || !stripe || !STRIPE_WEBHOOK_SECRET) {
+    return res.status(400).json({ error: 'Webhook signature or Stripe config missing.' });
+  }
+  let event: Stripe.Event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
+  } catch (err: any) {
+    console.error('Stripe webhook signature verification failed:', err.message);
+    return res.status(400).json({ error: 'Invalid webhook signature.' });
+  }
+  switch (event.type) {
+    case 'checkout.session.completed': {
+      const session = event.data.object as Stripe.Checkout.Session;
+      const orderId = session.metadata?.orderId;
+      if (orderId) {
+        await db.updateOrderPaymentStatus(orderId, 'Paid');
+        console.log(`Webhook: Order ${orderId} marked Paid.`);
+      }
+      break;
+    }
+    case 'payment_intent.succeeded': {
+      const pi = event.data.object as Stripe.PaymentIntent;
+      const orderId = pi.metadata?.orderId;
+      if (orderId) {
+        await db.updateOrderPaymentStatus(orderId, 'Paid');
+        console.log(`Webhook: Order ${orderId} confirmed Paid via PaymentIntent.`);
+      }
+      break;
+    }
+    case 'payment_intent.payment_failed': {
+      const pi = event.data.object as Stripe.PaymentIntent;
+      const orderId = pi.metadata?.orderId;
+      if (orderId) {
+        await db.updateOrderPaymentStatus(orderId, 'Failed');
+        console.log(`Webhook: Order ${orderId} payment failed.`);
+      }
+      break;
+    }
+  }
+  res.json({ received: true });
+});
 
 app.use(express.json({ limit: '100kb' }));
 
@@ -95,17 +156,52 @@ const requireHmac = (req: express.Request, res: express.Response, next: express.
   next();
 };
 
+// --- INPUT LENGTH CONSTRAINTS ---
+const VALIDATION = {
+  NAME_MAX: 100,
+  EMAIL_MAX: 254,
+  PASSWORD_MIN: 8,
+  PASSWORD_MAX: 128,
+  STREET_MAX: 200,
+  CITY_MAX: 100,
+  PHONE_MAX: 20,
+  REVIEW_MAX: 2000,
+  PRODUCT_NAME_MAX: 200,
+  PRODUCT_DESC_MAX: 5000,
+} as const;
+
 // --- SECURITY HELPER FOR PASSWORDS ---
-function hashPassword(password: string, saltInput?: string) {
-  const salt = saltInput || crypto.randomBytes(16).toString('hex');
-  const hash = crypto.pbkdf2Sync(password, salt, 100000, 64, 'sha512').toString('hex');
-  return { hash, salt };
+// Uses bcrypt (with automatic salt) for new hashes.
+// Verifies against bcrypt first; falls back to PBKDF2 for legacy hashes.
+function hashPassword(password: string, _legacySalt?: string) {
+  const hash = bcrypt.hashSync(password, 12);
+  return { hash, salt: '' };  // salt column unused for bcrypt
 }
 
-// Simple Email validation
+function verifyPassword(password: string, hash: string, legacySalt?: string): boolean {
+  // bcrypt hashes always start with $2
+  if (hash.startsWith('$2')) {
+    return bcrypt.compareSync(password, hash);
+  }
+  // Legacy PBKDF2 hashes
+  if (legacySalt) {
+    const check = crypto.pbkdf2Sync(password, legacySalt, 100000, 64, 'sha512').toString('hex');
+    return check === hash;
+  }
+  return false;
+}
+
+// Email validation
 function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email) && email.length <= 100;
+  return emailRegex.test(email) && email.length <= VALIDATION.EMAIL_MAX;
+}
+
+// String length validation helper
+function validateLength(value: string | undefined, field: string, max: number, min = 1): string | null {
+  if (!value || value.trim().length < min) return `${field} is required (min ${min} char).`;
+  if (value.length > max) return `${field} exceeds max ${max} characters.`;
+  return null;
 }
 
 // XSS Sanitizer for basic strings to prevent injections
@@ -120,33 +216,15 @@ function sanitizeString(str: string): string {
     .replace(/\//g, '&#x2F;');
 }
 
-// --- RATE LIMITER STORE ---
-// Process-local and in-memory. This resets on container restart, which is an
-// acceptable tradeoff (rate limits are a defense-in-depth measure, not the
-// system of record) — unlike user/order data, losing rate-limit counters on
-// restart does not lock anyone out or lose anyone's data.
-const rateLimits = new Map<string, { count: number; resetTime: number }>();
-
-function checkRateLimit(key: string, maxRequests = 10, windowMs = 15 * 60 * 1000): boolean {
-  const now = Date.now();
-  const limit = rateLimits.get(key);
-
-  if (!limit) {
-    rateLimits.set(key, { count: 1, resetTime: now + windowMs });
-    return true;
+// --- RATE LIMITER STORE [H5] ---
+// Postgres-backed, survives restarts. Falls back to permissive if DB fails.
+async function checkRateLimit(key: string, maxRequests = 10, windowMs = 15 * 60 * 1000): Promise<boolean> {
+  try {
+    return await db.checkRateLimit(key, maxRequests, windowMs);
+  } catch (err) {
+    console.warn('Rate limiter DB error (allowing request):', err);
+    return true; // fail open
   }
-
-  if (now > limit.resetTime) {
-    rateLimits.set(key, { count: 1, resetTime: now + windowMs });
-    return true;
-  }
-
-  if (limit.count >= maxRequests) {
-    return false;
-  }
-
-  limit.count++;
-  return true;
 }
 
 // --- AUDIT LOGGER ---
@@ -238,7 +316,7 @@ function asyncRoute(
 
 app.post('/api/auth/register', asyncRoute(async (req, res) => {
   const ip = req.ip || 'unknown-ip';
-  if (!checkRateLimit(`register-${ip}`, 10, 15 * 60 * 1000)) {
+  if (!await checkRateLimit(`register-${ip}`, 10, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'Too many registration requests. Please wait 15 minutes.' });
   }
 
@@ -248,13 +326,15 @@ app.post('/api/auth/register', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'All fields (email, password, name) are required.' });
   }
 
+  // Input length validation [M5]
+  const nameErr = validateLength(name, 'Name', VALIDATION.NAME_MAX);
+  if (nameErr) return res.status(400).json({ error: nameErr });
+  const passLenErr = validateLength(password, 'Password', VALIDATION.PASSWORD_MAX, VALIDATION.PASSWORD_MIN);
+  if (passLenErr) return res.status(400).json({ error: passLenErr });
+
   const cleanEmail = email.trim().toLowerCase();
   if (!isValidEmail(cleanEmail)) {
     return res.status(400).json({ error: 'A valid email format is required.' });
-  }
-
-  if (password.length < 8) {
-    return res.status(400).json({ error: 'Password must incorporate at least 8 characters for safety.' });
   }
 
   const existingUser = await db.findUserByEmail(cleanEmail);
@@ -307,7 +387,7 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
 
   const cleanEmail = email.trim().toLowerCase();
 
-  if (!checkRateLimit(`login-${cleanEmail}`, 5, 10 * 60 * 1000)) {
+  if (!await checkRateLimit(`login-${cleanEmail}`, 5, 10 * 60 * 1000)) {
     return res.status(429).json({ error: 'Too many failed login attempts. Please try again in 10 minutes.' });
   }
 
@@ -316,9 +396,14 @@ app.post('/api/auth/login', asyncRoute(async (req, res) => {
     return res.status(401).json({ error: 'Invalid email or password combination.' });
   }
 
-  const checkHash = hashPassword(password, user.passwordSalt);
-  if (checkHash.hash !== user.passwordHash) {
+  if (!verifyPassword(password, user.passwordHash, user.passwordSalt)) {
     return res.status(401).json({ error: 'Invalid email or password combination.' });
+  }
+
+  // If this was a legacy PBKDF2 hash, re-hash with bcrypt on successful login
+  if (!user.passwordHash.startsWith('$2')) {
+    const { hash } = hashPassword(password);
+    await db.updateUserPassword(user.id, hash, '');
   }
 
   const token = crypto.randomUUID() + crypto.randomBytes(32).toString('hex');
@@ -377,7 +462,7 @@ app.post('/api/auth/forgot-password', asyncRoute(async (req, res) => {
   }
 
   const cleanEmail = email.trim().toLowerCase();
-  if (!checkRateLimit(`reset-${cleanEmail}`, 3, 15 * 60 * 1000)) {
+  if (!await checkRateLimit(`reset-${cleanEmail}`, 3, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'Verification requests flooded. Please retry in 15 minutes.' });
   }
 
@@ -401,9 +486,8 @@ app.post('/api/auth/reset-password', asyncRoute(async (req, res) => {
     return res.status(400).json({ error: 'All reset criteria are required.' });
   }
 
-  if (newPassword.length < 8) {
-    return res.status(400).json({ error: 'Password must incorporate at least 8 characters.' });
-  }
+  const pwErr = validateLength(newPassword, 'Password', VALIDATION.PASSWORD_MAX, VALIDATION.PASSWORD_MIN);
+  if (pwErr) return res.status(400).json({ error: pwErr });
 
   const entry = await db.consumeResetToken(token);
   if (!entry) {
@@ -445,6 +529,8 @@ app.put('/api/profile', authenticateUser, asyncRoute(async (req: AuthenticatedRe
   const { name, addresses } = req.body;
 
   if (name) {
+    const nameErr = validateLength(name, 'Name', VALIDATION.NAME_MAX);
+    if (nameErr) return res.status(400).json({ error: nameErr });
     await db.pool.query('UPDATE users SET name = $1 WHERE id = $2', [sanitizeString(name), req.user!.id]);
   }
 
@@ -513,6 +599,8 @@ app.post('/api/products/:id/reviews', authenticateUser, asyncRoute(async (req: A
   if (!rating || !comment) {
     return res.status(400).json({ error: 'Rating (1-5) and comment are mandatory fields.' });
   }
+  const commentErr = validateLength(comment, 'Review comment', VALIDATION.REVIEW_MAX);
+  if (commentErr) return res.status(400).json({ error: commentErr });
   const numericRating = Number(rating);
   if (!Number.isInteger(numericRating) || numericRating < 1 || numericRating > 5) {
     return res.status(400).json({ error: 'Rating must be a whole number from 1 to 5.' });
@@ -559,6 +647,11 @@ app.post('/api/orders/checkout', authenticateUser, requireHmac, asyncRoute(async
   if (!shippingAddress || !shippingAddress.street || !shippingAddress.city) {
     return res.status(400).json({ error: 'Full shipping address documentation required.' });
   }
+  // Input length validation [M5]
+  const addrStreetErr = validateLength(shippingAddress.street, 'Street address', VALIDATION.STREET_MAX);
+  if (addrStreetErr) return res.status(400).json({ error: addrStreetErr });
+  const addrCityErr = validateLength(shippingAddress.city, 'City', VALIDATION.CITY_MAX);
+  if (addrCityErr) return res.status(400).json({ error: addrCityErr });
 
   if (!req.user?.isVerified) {
     return res.status(403).json({ error: 'Please verify your account before checkout.' });
@@ -746,6 +839,13 @@ app.post('/api/admin/products', authenticateUser, requireAdmin, asyncRoute(async
 
   if (!name || !price || !category) {
     return res.status(400).json({ error: 'Name, price, and category parameters are mandatory.' });
+  }
+  // Input length validation [M5]
+  const pNameErr = validateLength(name, 'Product name', VALIDATION.PRODUCT_NAME_MAX);
+  if (pNameErr) return res.status(400).json({ error: pNameErr });
+  if (description) {
+    const pDescErr = validateLength(description, 'Description', VALIDATION.PRODUCT_DESC_MAX);
+    if (pDescErr) return res.status(400).json({ error: pDescErr });
   }
 
   let defaultImage = 'https://images.unsplash.com/photo-1608248597279-f99d160bfcbc?q=80&w=800';
@@ -956,9 +1056,11 @@ app.post('/api/stripe/create-checkout-session', authenticateUser, asyncRoute(asy
 app.use(express.static(path.join(process.cwd(), 'public')));
 
 // SPA fallback: serve index.html for all non-API routes
+// Injects CSP nonce into the script tag [H1]
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api/')) return next();
-  res.sendFile(path.join(process.cwd(), 'index.html'));
+  const html = fs.readFileSync(path.join(process.cwd(), 'index.html'), 'utf-8');
+  res.type('html').send(html.replace(/__NONCE__/g, res.locals.nonce));
 });
 
 async function startServer() {

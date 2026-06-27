@@ -208,3 +208,12 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 
 CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action);
+
+-- -----------------------------------------------------------
+-- RATE LIMITER [H5]
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rate_limiter (
+  key TEXT PRIMARY KEY,
+  count INTEGER NOT NULL DEFAULT 1,
+  reset_at TIMESTAMPTZ NOT NULL
+);
