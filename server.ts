@@ -86,8 +86,10 @@ function verifyHmac(req: express.Request): boolean {
 }
 
 // HMAC enforcement middleware for checkout & payment routes
+// Enforced in all environments unless DISABLE_HMAC=true (local dev only).
 const requireHmac = (req: express.Request, res: express.Response, next: express.NextFunction) => {
-  if (process.env.NODE_ENV === 'production' && !verifyHmac(req)) {
+  const isDev = process.env.NODE_ENV === 'development' || process.env.DISABLE_HMAC === 'true';
+  if (!isDev && !verifyHmac(req)) {
     return res.status(401).json({ error: 'Missing or invalid request signature.' });
   }
   next();
@@ -284,14 +286,15 @@ app.post('/api/auth/register', asyncRoute(async (req, res) => {
   const initialLoyalty = referredByUserId ? 75 : 50;
   await db.addLoyaltyPoints(newUser.id, initialLoyalty);
 
-  // Generate Email Verification Code (Simulation — see SECURITY_AUDIT_AND_PATCHES.md
-  // for why real email delivery is not wired up yet)
-  const code = Math.floor(100000 + Math.random() * 900000).toString();
+  // Generate Email Verification Code
+  const code = crypto.randomInt(100000, 999999).toString();
   await db.createVerificationCode(newUser.id, code);
 
+  // TODO: Send code via email service (SendGrid / AWS SES / SMTP)
+  // await sendVerificationEmail(cleanEmail, code);
+
   res.status(201).json({
-    message: 'Account crafted successfully. Verify your email to activate all benefits.',
-    simulatedEmailVerificationCode: code,
+    message: 'Account created. Please check your email for the verification code.',
     email: cleanEmail,
   });
 }));
@@ -379,19 +382,16 @@ app.post('/api/auth/forgot-password', asyncRoute(async (req, res) => {
   }
 
   const user = await db.findUserByEmail(cleanEmail);
-  if (!user) {
-    // Standard secure procedure: mock success even if not found to avoid account harvesting
-    return res.json({
-      message: 'If your email is on file, a password reset link has been simulated below.',
-      simulatedToken: null,
-    });
+  if (user) {
+    const resetToken = await db.createResetToken(user.id);
+    // TODO: Send token via email service
+    // await sendPasswordResetEmail(cleanEmail, resetToken);
   }
 
-  const resetToken = await db.createResetToken(user.id);
-
+  // Always return the same message regardless of whether the user exists
+  // to prevent email enumeration attacks.
   res.json({
-    message: 'If your email is on file, a password reset token has been generated below.',
-    simulatedToken: resetToken,
+    message: 'If your email is registered, you will receive a password reset link.',
   });
 }));
 

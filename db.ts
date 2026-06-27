@@ -24,8 +24,12 @@ if (!process.env.DATABASE_URL) {
 
 export const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  // Neon requires SSL; this also works fine for any standard managed Postgres.
-  ssl: { rejectUnauthorized: false },
+  // Neon requires SSL.
+  // Use rejectUnauthorized: true in production with env DATABASE_SSL_CA.
+  // For development/local, set NODE_ENV=development or DISABLE_SSL_VERIFY=true.
+  ssl: process.env.DISABLE_SSL_VERIFY === 'true' || process.env.NODE_ENV === 'development'
+    ? { rejectUnauthorized: false }
+    : { rejectUnauthorized: true, ca: process.env.DATABASE_SSL_CA || undefined },
   max: 10,
   idleTimeoutMillis: 30000,
 });
@@ -230,24 +234,31 @@ export async function getAddressById(addressId: string, userId: string): Promise
 
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days
 
+function hashToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
 export async function createSession(userId: string, token: string): Promise<void> {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
+  const tokenHash = hashToken(token);
   await pool.query(
-    'INSERT INTO sessions (user_id, token, expires_at) VALUES ($1, $2, $3)',
-    [userId, token, expiresAt]
+    'INSERT INTO sessions (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
+    [userId, tokenHash, expiresAt]
   );
 }
 
 export async function findSessionByToken(token: string): Promise<{ userId: string } | null> {
+  const tokenHash = hashToken(token);
   const { rows } = await pool.query(
-    'SELECT user_id FROM sessions WHERE token = $1 AND expires_at > now() LIMIT 1',
-    [token]
+    'SELECT user_id FROM sessions WHERE token_hash = $1 AND expires_at > now() LIMIT 1',
+    [tokenHash]
   );
   return rows[0] ? { userId: rows[0].user_id } : null;
 }
 
 export async function deleteSession(token: string): Promise<void> {
-  await pool.query('DELETE FROM sessions WHERE token = $1', [token]);
+  const tokenHash = hashToken(token);
+  await pool.query('DELETE FROM sessions WHERE token_hash = $1', [tokenHash]);
 }
 
 export async function deleteAllSessionsForUser(userId: string): Promise<void> {
