@@ -920,8 +920,8 @@ export async function seedIfEmpty() {
         benefits: 'Softens dry skin, seals hair moisture, supports scalp massage, adds natural gloss and leaves a clean tropical finish.',
         usage: 'Warm a few drops in your palms. Massage into skin, hair ends or scalp after bathing, then let the oil absorb before styling or dressing.',
         category: 'Oil',
-        price: 10000,
-        images: ['/products/coco-queens-coconut-oil.png'],
+        price: 15000,
+        images: ['/products/coco-queens-coconut-oil.jpeg'],
         stock: 45,
         status: 'Published' as const,
         skinType: 'Dry skin / Hair shine / Scalp care',
@@ -936,9 +936,9 @@ export async function seedIfEmpty() {
         usage: 'Massage onto damp skin in slow circles two or three times per week. Rinse well, pat dry and follow with Coco Queens coconut oil.',
         category: 'Scrub',
         price: 30000,
-        images: ['/products/coco-queens-scrub.png'],
+        images: ['/products/coco-queens-scrub.jpeg'],
         stock: 60,
-        status: 'Published' as const,
+        status: 'Draft' as const,
         skinType: 'Body polish / Dull skin / Rough texture',
         isRecurring: false,
       },
@@ -951,9 +951,9 @@ export async function seedIfEmpty() {
         usage: 'For skin, apply a thin layer as a short mask and rinse gently. For wellness use, add a spoon to warm drinks as preferred.',
         category: 'Honey',
         price: 22000,
-        images: ['/products/coco-queens-honey.png'],
+        images: ['/products/coco-queens-honey.jpeg'],
         stock: 30,
-        status: 'Published' as const,
+        status: 'Draft' as const,
         isRecurring: true,
       },
       {
@@ -965,9 +965,9 @@ export async function seedIfEmpty() {
         usage: 'Use a small amount on pulse points or blend a few drops into massage oil. Avoid eyes and patch test before first use.',
         category: 'Essential Oils',
         price: 18000,
-        images: ['/products/coco-queens-essential-oil.png'],
+        images: ['/products/coco-queens-essential-oil.jpeg'],
         stock: 120,
-        status: 'Published' as const,
+        status: 'Draft' as const,
         isRecurring: true,
       },
     ];
@@ -1008,6 +1008,32 @@ export async function seedIfEmpty() {
 
     console.log(`Seeded ${seedProducts.length} initial products with reviews and ratings.`);
   }
+
+  await pool.query(
+    `UPDATE products
+     SET price = 15000,
+         images = $1,
+         stock = GREATEST(stock, 1),
+         status = 'Published'
+     WHERE id = 'prod-1'`,
+    [JSON.stringify(['/products/coco-queens-coconut-oil.jpeg'])]
+  );
+  await pool.query(
+    `UPDATE products
+     SET images = CASE id
+       WHEN 'prod-2' THEN $1::jsonb
+       WHEN 'prod-3' THEN $2::jsonb
+       WHEN 'prod-4' THEN $3::jsonb
+       ELSE images
+     END,
+     status = 'Draft'
+     WHERE id IN ('prod-2','prod-3','prod-4')`,
+    [
+      JSON.stringify(['/products/coco-queens-scrub.jpeg']),
+      JSON.stringify(['/products/coco-queens-honey.jpeg']),
+      JSON.stringify(['/products/coco-queens-essential-oil.jpeg']),
+    ]
+  );
 
   const { rows: promoCountRows } = await pool.query('SELECT COUNT(*) FROM promotions');
   if (parseInt(promoCountRows[0].count, 10) === 0) {

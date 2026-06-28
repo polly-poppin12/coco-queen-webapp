@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/products/coco-queens-coconut-oil.png">
-    <img width="800" alt="Coco Queens — Pure organic beauty" src="public/products/coco-queens-coconut-oil.png" style="border-radius:12px;max-width:100%;">
+    <source media="(prefers-color-scheme: dark)" srcset="public/products/coco-queens-coconut-oil.jpeg">
+    <img width="800" alt="Coco Queens — Pure organic beauty" src="public/products/coco-queens-coconut-oil.jpeg" style="border-radius:12px;max-width:100%;">
   </picture>
 </div>
 

@@ -18,6 +18,7 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 const TZS_PER_USD = Number(process.env.TZS_PER_USD || 2500);
+const ACTIVE_PRODUCT_IDS = new Set(['prod-1']);
 
 // ---- Request ID middleware (tracing) ----
 app.use((req, res, next) => {
@@ -696,6 +697,9 @@ app.post('/api/orders/checkout', authenticateUser, requireHmac, asyncRoute(async
     if (!orig) {
       return res.status(400).json({ error: `Product variant ${item.name} not found.` });
     }
+    if (!ACTIVE_PRODUCT_IDS.has(orig.id)) {
+      return res.status(400).json({ error: `${orig.name} is coming soon and is not available for checkout yet.` });
+    }
     if (orig.stock < item.quantity) {
       return res.status(400).json({ error: `Insufficient stock on ${orig.name}. Only ${orig.stock} items exist.` });
     }
@@ -1049,6 +1053,9 @@ app.post('/api/stripe/create-checkout-session', authenticateUser, asyncRoute(asy
     const product = await db.getProductById(item.productId);
     if (!product || product.status !== 'Published') {
       return res.status(400).json({ error: `Product ${item.productId} is not available.` });
+    }
+    if (!ACTIVE_PRODUCT_IDS.has(product.id)) {
+      return res.status(400).json({ error: `${product.name} is coming soon and is not available for checkout yet.` });
     }
     if (product.stock < item.quantity) {
       return res.status(409).json({ error: `Insufficient stock on ${product.name}. Only ${product.stock} items exist.` });

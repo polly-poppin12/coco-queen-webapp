@@ -206,6 +206,68 @@ nav{
 }
 .product-panel:hover .product-visual .prod-img{transform:scale(1.03);}
 
+.coming-soon{
+  background:var(--milk);
+  padding:90px 52px 110px;
+}
+.coming-soon-head{
+  max-width:760px;
+  margin:0 auto 42px;
+  text-align:center;
+}
+.coming-kicker{
+  font-size:.63rem;font-weight:500;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--gold-dark);
+}
+.coming-title{
+  font-family:'Playfair Display',serif;
+  font-size:clamp(2rem,4vw,4rem);
+  font-weight:400;
+  color:var(--charcoal);
+  margin:14px 0 10px;
+}
+.coming-copy{
+  color:var(--taupe);
+  line-height:1.8;
+  font-size:.95rem;
+}
+.coming-grid{
+  display:grid;
+  grid-template-columns:repeat(3,minmax(0,1fr));
+  gap:24px;
+  max-width:1120px;
+  margin:0 auto;
+}
+.coming-card{
+  background:var(--cream);
+  border:1px solid rgba(201,169,110,.22);
+  overflow:hidden;
+}
+.coming-img{
+  width:100%;
+  aspect-ratio:4/5;
+  object-fit:cover;
+  display:block;
+  border-radius:28px;
+  padding:14px;
+}
+.coming-info{
+  padding:0 22px 24px;
+  text-align:center;
+}
+.coming-name{
+  font-family:'Playfair Display',serif;
+  font-size:1.35rem;
+  color:var(--charcoal);
+}
+.coming-status{
+  margin-top:8px;
+  font-size:.62rem;
+  letter-spacing:.18em;
+  text-transform:uppercase;
+  color:var(--gold-dark);
+}
+
 .prod-img-placeholder{
   width:min(82%,620px);
   height:min(72vh,680px);
@@ -506,11 +568,13 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
 .cart-item-img{
   width:64px;height:64px;
   background:var(--cream);
-  border-radius:4px;
+  border-radius:14px;
   display:flex;align-items:center;justify-content:center;
   flex-shrink:0;
   font-size:.6rem;color:var(--gold);font-family:'Playfair Display',serif;
+  overflow:hidden;
 }
+.cart-item-img img{width:100%;height:100%;object-fit:cover;border-radius:14px;}
 .cart-item-info{flex:1;}
 .cart-item-name{
   font-size:.82rem;font-weight:500;
@@ -718,6 +782,8 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
   .product-visual .prod-img,.prod-img-placeholder{width:100%;height:100%;max-height:none;border-radius:26px;}
   .product-panel.in .product-visual,.product-panel.in:nth-child(even) .product-visual{clip-path:inset(0 0 0% 0)!important;}
   .product-info,.product-panel:nth-child(even) .product-info{order:2;padding:40px 24px;}
+  .coming-soon{padding:64px 22px 78px;}
+  .coming-grid{grid-template-columns:1fr;gap:20px;}
   nav{padding:16px 20px;}
   .nav-r{gap:18px;}
   .prod-name{font-size:2rem;}
@@ -784,15 +850,23 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
   <!-- Products will be injected by JavaScript -->
 </div>
 
+<section class="coming-soon" id="comingSoon">
+  <div class="coming-soon-head">
+    <div class="coming-kicker">Coming soon</div>
+    <h2 class="coming-title">More Coco Queens rituals</h2>
+    <p class="coming-copy">Honey, essential oils and coconut scrub are being prepared for the store. For now, coconut oil is the available product.</p>
+  </div>
+  <div class="coming-grid" id="comingSoonGrid"></div>
+</section>
+
 <!-- ═══════ CLOSING ═══════ -->
 <section class="closing" id="closing">
   <div class="closing-logo">Coco <span>Queens</span></div>
   <div class="closing-tagline">Nature's Finest, Queen Approved</div>
   <p class="closing-sub">We believe beauty should be pure, honest, and gentle.<br>Every product is handcrafted with love, using only nature's finest ingredients.<br>Because every Queen deserves to feel radiant.</p>
   <div class="closing-social">
-    <a href="#">Instagram</a>
-    <a href="#">WhatsApp</a>
-    <a href="#">Email</a>
+    <a href="https://www.instagram.com/cocoqueenstz?igsh=ZHFneGRyY215eGIy" target="_blank" rel="noopener">Instagram</a>
+    <a href="https://wa.me/255750504905" target="_blank" rel="noopener">WhatsApp</a>
   </div>
 </section>
 
@@ -929,11 +1003,18 @@ function safeAttr(value) {
 }
 
 const PRODUCT_IMAGE_BY_ID = {
-  'prod-1': '/products/coco-queens-coconut-oil.png',
-  'prod-2': '/products/coco-queens-scrub.png',
-  'prod-3': '/products/coco-queens-honey.png',
-  'prod-4': '/products/coco-queens-essential-oil.png'
+  'prod-1': '/products/coco-queens-coconut-oil.jpeg',
+  'prod-2': '/products/coco-queens-scrub.jpeg',
+  'prod-3': '/products/coco-queens-honey.jpeg',
+  'prod-4': '/products/coco-queens-essential-oil.jpeg'
 };
+
+const ACTIVE_PRODUCT_IDS = new Set(['prod-1']);
+const COMING_SOON_PRODUCTS = [
+  { id: 'prod-3', name: 'Pure Raw Honey', image: PRODUCT_IMAGE_BY_ID['prod-3'] },
+  { id: 'prod-4', name: 'Essential Oils', image: PRODUCT_IMAGE_BY_ID['prod-4'] },
+  { id: 'prod-2', name: 'Exfoliating Coconut Scrub', image: PRODUCT_IMAGE_BY_ID['prod-2'] }
+];
 
 function safeImageSrc(src) {
   const raw = String(src || '').trim();
@@ -961,6 +1042,7 @@ const $ = id => document.getElementById(id);
 const cur = $('cur');
 const heroBg = $('heroBg');
 const productsContainer = $('products');
+const comingSoonGrid = $('comingSoonGrid');
 const authModal = $('authModal');
 const authModalClose = $('authModalClose');
 const authTitle = $('authTitle');
@@ -1162,15 +1244,16 @@ function showAddPopup(product, qty) {
   addPopupBtn.style.display = count > 0 ? 'flex' : 'none';
 
   // Build items list
-  addPopupItems.innerHTML = cart.map(item => `
+  addPopupItems.innerHTML = cart.length ? cart.map(item => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(201,169,110,0.15);">
       <div>
         <div style="font-size:.85rem;font-weight:500;">${safeText(item.name)}</div>
         <div style="font-size:.7rem;color:var(--taupe);">Qty: ${Math.max(1, Number(item.qty) || 1)}</div>
+        <button type="button" class="cart-item-remove" data-popup-remove="${safeAttr(item.id)}" style="padding:6px 0 0;">Remove</button>
       </div>
       <div style="font-family:'Playfair Display',serif;font-size:.9rem;">${fmtPrice((Number(item.price) || 0) * (Number(item.qty) || 1))}</div>
     </div>
-  `).join('');
+  `).join('') : '<div class="cart-empty">Your bag is empty</div>';
 
   addPopupTotal.textContent = fmtPrice(total);
   addPopup.classList.add('open');
@@ -1187,6 +1270,16 @@ function closeAddPopup() {
 addPopupClose.addEventListener('click', closeAddPopup);
 addPopupContinue.addEventListener('click', closeAddPopup);
 addPopupOverlay.addEventListener('click', closeAddPopup);
+addPopupItems.addEventListener('click', (e) => {
+  const removeBtn = e.target.closest('[data-popup-remove]');
+  if (!removeBtn) return;
+  removeFromCart(removeBtn.getAttribute('data-popup-remove'));
+  if (cart.length > 0) {
+    showAddPopup();
+  } else {
+    closeAddPopup();
+  }
+});
 bagBtn.addEventListener('click', () => { if (cart.length > 0) showAddPopup(); });
 
 // ═══════════════════════════════════════════════════════════════
@@ -1352,22 +1445,39 @@ function normalizeProduct(product) {
 async function loadProducts() {
   try {
     const data = await api('/api/products');
-    products = (Array.isArray(data) ? data : []).map(normalizeProduct);
+    const loadedProducts = (Array.isArray(data) ? data : []).map(normalizeProduct);
+    products = loadedProducts.filter(p => ACTIVE_PRODUCT_IDS.has(p.id));
+    if (products.length === 0) products = getFallbackProducts();
     renderProducts(products);
   } catch (err) {
     console.error('Failed to load products:', err);
     products = getFallbackProducts();
     renderProducts(products);
   }
+  renderComingSoon(COMING_SOON_PRODUCTS);
 }
 
 function getFallbackProducts() {
   return [
-    { id: 'prod-1', name: 'Extra Virgin Coconut Oil', description: 'Pure organic coconut oil for skin and hair nourishment.', benefits: 'Moisturizes, nourishes, strengthens hair', price: 10000, category: 'Oil', image: PRODUCT_IMAGE_BY_ID['prod-1'] },
-    { id: 'prod-2', name: 'Exfoliating Coconut Scrub', description: 'Exfoliating body scrub with virgin coconut oil.', benefits: 'Exfoliates, softens, revitalizes', price: 30000, category: 'Body', image: PRODUCT_IMAGE_BY_ID['prod-2'] },
-    { id: 'prod-3', name: 'Pure Raw Honey', description: 'Pure wild honey harvested from Tanzanian forests.', benefits: 'Antioxidant-rich, immune support', price: 22000, category: 'Wellness', image: PRODUCT_IMAGE_BY_ID['prod-3'] },
-    { id: 'prod-4', name: 'Essential Oils', description: 'Aromatic essential oil blend with coconut and vanilla.', benefits: 'Aromatherapy, relaxation', price: 18000, category: 'Aromatherapy', image: PRODUCT_IMAGE_BY_ID['prod-4'] }
+    { id: 'prod-1', name: 'Extra Virgin Coconut Oil', description: 'Pure organic coconut oil for skin and hair nourishment.', benefits: 'Moisturizes, nourishes, strengthens hair', price: 15000, category: 'Available Now', image: PRODUCT_IMAGE_BY_ID['prod-1'] }
   ].map(normalizeProduct);
+}
+
+function renderComingSoon(items) {
+  if (!comingSoonGrid) return;
+  comingSoonGrid.innerHTML = items.map(item => {
+    const name = safeText(item.name);
+    const imgSrc = safeImageSrc(item.image);
+    return `
+      <article class="coming-card">
+        <img class="coming-img" src="${safeAttr(imgSrc)}" alt="${name}" loading="lazy"/>
+        <div class="coming-info">
+          <div class="coming-name">${name}</div>
+          <div class="coming-status">Coming soon</div>
+        </div>
+      </article>
+    `;
+  }).join('');
 }
 
 // ═══════════════════════════════════════════════════════════════
