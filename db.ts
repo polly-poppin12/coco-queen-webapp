@@ -303,27 +303,25 @@ export async function checkVerificationCode(userId: string, code: string): Promi
 // RESET TOKENS
 // ----------------------------------------------------------------
 
-const RESET_TOKEN_TTL_MS = 1000 * 60 * 30; // 30 minutes
+const RESET_TOKEN_TTL_MS = 1000 * 60 * 15; // 15 minutes
 
-export async function createResetToken(userId: string): Promise<string> {
-  const token = crypto.randomBytes(32).toString('base64url');
+export async function createResetCode(userId: string, codeHash: string): Promise<void> {
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
   await pool.query('DELETE FROM reset_tokens WHERE user_id = $1', [userId]);
   await pool.query(
     'INSERT INTO reset_tokens (user_id, token, expires_at) VALUES ($1, $2, $3)',
-    [userId, token, expiresAt]
+    [userId, codeHash, expiresAt]
   );
-  return token;
 }
 
-export async function consumeResetToken(token: string): Promise<{ userId: string } | null> {
+export async function consumeResetCode(userId: string, codeHash: string): Promise<boolean> {
   const { rows } = await pool.query(
-    'SELECT id, user_id FROM reset_tokens WHERE token = $1 AND expires_at > now() LIMIT 1',
-    [token]
+    'SELECT id FROM reset_tokens WHERE user_id = $1 AND token = $2 AND expires_at > now() LIMIT 1',
+    [userId, codeHash]
   );
-  if (!rows[0]) return null;
+  if (!rows[0]) return false;
   await pool.query('DELETE FROM reset_tokens WHERE id = $1', [rows[0].id]);
-  return { userId: rows[0].user_id };
+  return true;
 }
 
 // ----------------------------------------------------------------

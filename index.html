@@ -491,6 +491,20 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
   transition:border-color .2s;outline:none;
 }
 .form-group input:focus{border-color:var(--gold);}
+.form-help{
+  margin-top:-8px;
+  margin-bottom:18px;
+  text-align:right;
+}
+.form-help button{
+  background:none;
+  border:none;
+  color:var(--gold);
+  cursor:pointer;
+  font-size:.72rem;
+  padding:0;
+  text-decoration:underline;
+}
 .btn-primary{
   width:100%;padding:14px;
   background:var(--charcoal);color:var(--cream);
@@ -897,9 +911,16 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
           <label for="authEmail">Email</label>
           <input type="email" id="authEmail" placeholder="queen@example.com" autocomplete="email" required/>
         </div>
-        <div class="form-group">
-          <label for="authPass">Password</label>
+        <div class="form-group" id="resetCodeGroup" style="display:none">
+          <label for="resetCode">Reset Code</label>
+          <input type="text" id="resetCode" placeholder="6 digits" inputmode="numeric" autocomplete="one-time-code" maxlength="6" pattern="[0-9]{6}"/>
+        </div>
+        <div class="form-group" id="passGroup">
+          <label for="authPass" id="authPassLabel">Password</label>
           <input type="password" id="authPass" placeholder="Min. 8 characters" autocomplete="current-password" required/>
+        </div>
+        <div class="form-help" id="forgotPasswordRow">
+          <button type="button" id="forgotPasswordLink">Forgot password?</button>
         </div>
         <button type="submit" class="btn-primary" id="authSubmit">
           <span>Sign In</span>
@@ -1034,6 +1055,7 @@ function safeImageSrc(src) {
 let currentUser = null;
 let cart = [];
 let isSignup = false;
+let authMode = 'login';
 let products = [];
 let pageReady = false;
 
@@ -1050,8 +1072,14 @@ const authSubtitle = $('authSubtitle');
 const authForm = $('authForm');
 const authEmail = $('authEmail');
 const authPass = $('authPass');
+const authPassLabel = $('authPassLabel');
 const authName = $('authName');
 const nameGroup = $('nameGroup');
+const passGroup = $('passGroup');
+const resetCodeGroup = $('resetCodeGroup');
+const resetCode = $('resetCode');
+const forgotPasswordRow = $('forgotPasswordRow');
+const forgotPasswordLink = $('forgotPasswordLink');
 const authSubmit = $('authSubmit');
 const authError = $('authError');
 const authSuccess = $('authSuccess');
@@ -1173,31 +1201,65 @@ navUserName.addEventListener('click', () => {
   }
 });
 
+function authSubmitText() {
+  if (authMode === 'signup') return 'Create Account';
+  if (authMode === 'forgot') return 'Send Reset Code';
+  if (authMode === 'reset') return 'Change Password';
+  return 'Sign In';
+}
+
 function openAuth(mode) {
+  authMode = mode;
   isSignup = mode === 'signup';
   authError.style.display = 'none';
   authSuccess.style.display = 'none';
+  nameGroup.style.display = isSignup ? 'block' : 'none';
+  passGroup.style.display = mode === 'forgot' ? 'none' : 'block';
+  resetCodeGroup.style.display = mode === 'reset' ? 'block' : 'none';
+  forgotPasswordRow.style.display = mode === 'login' ? 'block' : 'none';
+  authPass.required = mode !== 'forgot';
+  resetCode.required = mode === 'reset';
+  authPassLabel.textContent = mode === 'reset' ? 'New Password' : 'Password';
+  authPass.placeholder = mode === 'reset' ? 'New password' : 'Min. 8 characters';
+  authPass.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+
   if (isSignup) {
     authTitle.textContent = 'Join the Royalty';
     authSubtitle.textContent = 'Create your Coco Queens account';
-    nameGroup.style.display = 'block';
-    authSubmit.querySelector('span').textContent = 'Create Account';
     authSwitchText.textContent = 'Already a Queen?';
     authSwitchLink.textContent = 'Sign in';
+  } else if (mode === 'forgot') {
+    authTitle.textContent = 'Reset your password';
+    authSubtitle.textContent = 'Enter your email and we will send a 6-digit code';
+    authSwitchText.textContent = 'Remembered it?';
+    authSwitchLink.textContent = 'Sign in';
+  } else if (mode === 'reset') {
+    authTitle.textContent = 'Enter reset code';
+    authSubtitle.textContent = 'Use the code from your email and choose a new password';
+    authSwitchText.textContent = 'Need a new code?';
+    authSwitchLink.textContent = 'Send another';
   } else {
     authTitle.textContent = 'Welcome back';
     authSubtitle.textContent = 'Sign in to your Coco Queens account';
-    nameGroup.style.display = 'none';
-    authSubmit.querySelector('span').textContent = 'Sign In';
     authSwitchText.textContent = "Don't have an account?";
     authSwitchLink.textContent = 'Create one';
   }
+  authSubmit.querySelector('span').textContent = authSubmitText();
   authModal.classList.add('open');
 }
 
 authModalClose.addEventListener('click', () => authModal.classList.remove('open'));
 authModal.addEventListener('click', (e) => { if (e.target === authModal) authModal.classList.remove('open'); });
-authSwitchLink.addEventListener('click', () => openAuth(isSignup ? 'login' : 'signup'));
+forgotPasswordLink.addEventListener('click', () => openAuth('forgot'));
+authSwitchLink.addEventListener('click', () => {
+  if (authMode === 'signup' || authMode === 'forgot') {
+    openAuth('login');
+  } else if (authMode === 'reset') {
+    openAuth('forgot');
+  } else {
+    openAuth('signup');
+  }
+});
 
 authForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1214,6 +1276,26 @@ authForm.addEventListener('submit', async (e) => {
       authSuccess.style.display = 'block';
       authSuccess.textContent = 'Account created! You can now sign in.';
       setTimeout(() => openAuth('login'), 2000);
+    } else if (authMode === 'forgot') {
+      const requestedEmail = authEmail.value;
+      await api('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: requestedEmail })
+      });
+      openAuth('reset');
+      authEmail.value = requestedEmail;
+      authSuccess.style.display = 'block';
+      authSuccess.textContent = 'If that email is registered, a 6-digit code has been sent.';
+    } else if (authMode === 'reset') {
+      await api('/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: authEmail.value, code: resetCode.value, newPassword: authPass.value })
+      });
+      authSuccess.style.display = 'block';
+      authSuccess.textContent = 'Password changed. You can now sign in.';
+      resetCode.value = '';
+      authPass.value = '';
+      setTimeout(() => openAuth('login'), 1800);
     } else {
       const data = await api('/api/auth/login', {
         method: 'POST',
@@ -1227,7 +1309,7 @@ authForm.addEventListener('submit', async (e) => {
     authError.textContent = err.message;
   } finally {
     authSubmit.disabled = false;
-    authSubmit.querySelector('span').textContent = isSignup ? 'Create Account' : 'Sign In';
+    authSubmit.querySelector('span').textContent = authSubmitText();
   }
 });
 

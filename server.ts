@@ -19,6 +19,8 @@ const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
 const TZS_PER_USD = Number(process.env.TZS_PER_USD || 2500);
 const ACTIVE_PRODUCT_IDS = new Set(['prod-1']);
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || '';
 
 // ---- Request ID middleware (tracing) ----
 app.use((req, res, next) => {
@@ -146,6 +148,61 @@ function verifyHmac(req: express.Request): boolean {
   // Constant-time comparison to prevent timing attacks
   if (signature.length !== expected.length) return false;
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
+function hashResetCode(userId: string, code: string): string {
+  return crypto
+    .createHmac('sha256', HMAC_SECRET)
+    .update(`${userId}:${code}`)
+    .digest('hex');
+}
+
+function createDigitCode(): string {
+  return crypto.randomInt(0, 1000000).toString().padStart(6, '0');
+}
+
+function escapeEmailHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#x27;',
+  }[char] || char));
+}
+
+async function sendPasswordResetEmail(to: string, code: string): Promise<void> {
+  if (!RESEND_API_KEY || !EMAIL_FROM) {
+    throw new Error('Password reset email is not configured. Set RESEND_API_KEY and EMAIL_FROM.');
+  }
+
+  const safeCode = escapeEmailHtml(code);
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from: EMAIL_FROM,
+      to: [to],
+      subject: 'Your Coco Queens password reset code',
+      text: `Your Coco Queens password reset code is ${code}. It expires in 15 minutes. If you did not request this, ignore this email.`,
+      html: `
+        <div style="font-family:Georgia,serif;line-height:1.6;color:#2f2418">
+          <h2 style="margin:0 0 12px;color:#8b5a2b">Coco Queens password reset</h2>
+          <p>Use this code to change your password:</p>
+          <p style="font-size:28px;letter-spacing:8px;font-weight:bold;margin:16px 0">${safeCode}</p>
+          <p>This code expires in 15 minutes. If you did not request it, you can ignore this email.</p>
+        </div>
+      `,
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Resend email failed (${response.status}): ${body.slice(0, 300)}`);
+  }
 }
 
 // HMAC enforcement middleware for checkout & payment routes
@@ -487,41 +544,64 @@ app.post('/api/auth/forgot-password', asyncRoute(async (req, res) => {
   }
 
   const cleanEmail = email.trim().toLowerCase();
+  if (!isValidEmail(cleanEmail)) {
+    return res.status(400).json({ error: 'A valid email format is required.' });
+  }
+
+  if (!RESEND_API_KEY || !EMAIL_FROM) {
+    return res.status(503).json({ error: 'Password reset email is not configured yet.' });
+  }
+
   if (!await checkRateLimit(`reset-${cleanEmail}`, 3, 15 * 60 * 1000)) {
     return res.status(429).json({ error: 'Verification requests flooded. Please retry in 15 minutes.' });
   }
 
   const user = await db.findUserByEmail(cleanEmail);
   if (user) {
-    const resetToken = await db.createResetToken(user.id);
-    // TODO: Send token via email service
-    // await sendPasswordResetEmail(cleanEmail, resetToken);
+    const code = createDigitCode();
+    const codeHash = hashResetCode(user.id, code);
+    await db.createResetCode(user.id, codeHash);
+    try {
+      await sendPasswordResetEmail(cleanEmail, code);
+    } catch (err) {
+      await db.consumeResetCode(user.id, codeHash).catch(() => {});
+      console.error('Password reset email failed:', err);
+    }
   }
 
   // Always return the same message regardless of whether the user exists
   // to prevent email enumeration attacks.
   res.json({
-    message: 'If your email is registered, you will receive a password reset link.',
+    message: 'If your email is registered, you will receive a 6-digit reset code.',
   });
 }));
 
 app.post('/api/auth/reset-password', asyncRoute(async (req, res) => {
-  const { token, newPassword } = req.body;
-  if (!token || !newPassword) {
+  const { email, code, newPassword } = req.body;
+  if (!email || !code || !newPassword) {
     return res.status(400).json({ error: 'All reset criteria are required.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  if (!isValidEmail(cleanEmail) || !/^\d{6}$/.test(String(code).trim())) {
+    return res.status(400).json({ error: 'Reset code has expired or is invalid.' });
   }
 
   const pwErr = validateLength(newPassword, 'Password', VALIDATION.PASSWORD_MAX, VALIDATION.PASSWORD_MIN);
   if (pwErr) return res.status(400).json({ error: pwErr });
 
-  const entry = await db.consumeResetToken(token);
-  if (!entry) {
-    return res.status(400).json({ error: 'Reset link has expired or is invalid.' });
+  if (!await checkRateLimit(`reset-confirm-${cleanEmail}`, 8, 15 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many reset attempts. Please request a new code.' });
   }
 
-  const user = await db.findUserById(entry.userId);
+  const user = await db.findUserByEmail(cleanEmail);
   if (!user) {
-    return res.status(400).json({ error: 'User does not exist inside repository.' });
+    return res.status(400).json({ error: 'Reset code has expired or is invalid.' });
+  }
+
+  const ok = await db.consumeResetCode(user.id, hashResetCode(user.id, String(code).trim()));
+  if (!ok) {
+    return res.status(400).json({ error: 'Reset code has expired or is invalid.' });
   }
 
   const { hash, salt } = hashPassword(newPassword);

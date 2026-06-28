@@ -75,6 +75,8 @@ See [.env.example](.env.example) for the full list. Required:
 | `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key matching the secret key mode |
 | `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret for payment confirmation |
 | `TZS_PER_USD` | TSh-to-USD conversion rate used by Stripe Checkout |
+| `RESEND_API_KEY` | Resend API key used to send password reset codes |
+| `EMAIL_FROM` | Verified sender address for account emails |
 | `HMAC_SECRET` | Secret for request signing |
 | `OWNER_BOOTSTRAP_PASSWORD` | Initial owner account password |
 | `ADMIN_BOOTSTRAP_PASSWORD` | Initial admin account password |
