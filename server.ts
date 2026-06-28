@@ -1192,6 +1192,7 @@ async function startServer() {
 
   // Then seed the database (may be slow on cold Neon start)
   try {
+    await db.ensureSchema();
     await db.seedIfEmpty();
   } catch (err: any) {
     console.error('Database seed failed (non-fatal):', err.message);
