@@ -184,6 +184,7 @@ nav{
   clip-path:inset(0 100% 0 0);
   transition:clip-path 1s cubic-bezier(0.77,0,0.175,1);
   display:flex;align-items:center;justify-content:center;
+  padding:clamp(28px,5vw,72px);
 }
 .product-panel.in .product-visual{clip-path:inset(0 0% 0 0);}
 .product-panel:nth-child(even) .product-visual{
@@ -194,20 +195,31 @@ nav{
 .product-panel:nth-child(even) .product-info{order:1;}
 
 .product-visual .prod-img{
-  width:100%;height:100%;object-fit:cover;
+  width:min(82%,620px);
+  height:min(72vh,680px);
+  max-height:calc(100% - 48px);
+  object-fit:cover;
   display:block;
+  border-radius:34px;
+  box-shadow:0 28px 70px rgba(43,35,31,.18);
   transition:transform .8s ease;
 }
 .product-panel:hover .product-visual .prod-img{transform:scale(1.03);}
 
 .prod-img-placeholder{
-  width:100%;height:100%;
+  width:min(82%,620px);
+  height:min(72vh,680px);
+  max-height:calc(100% - 48px);
   display:flex;align-items:center;justify-content:center;
   font-family:'Playfair Display',serif;
   font-style:italic;font-size:2rem;
   color:var(--gold);
   background:linear-gradient(135deg, var(--cream), #f5ede0);
-  min-height:500px;
+  border:1px solid rgba(201,169,110,.28);
+  border-radius:34px;
+  box-shadow:0 28px 70px rgba(43,35,31,.12);
+  padding:24px;
+  text-align:center;
 }
 
 .product-info{
@@ -702,7 +714,8 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
 
 @media(max-width:900px){
   .product-panel,.product-panel:nth-child(even){grid-template-columns:1fr;min-height:auto;}
-  .product-visual,.product-panel:nth-child(even) .product-visual{order:1;aspect-ratio:3/4;clip-path:inset(0 0 100% 0)!important;}
+  .product-visual,.product-panel:nth-child(even) .product-visual{order:1;aspect-ratio:3/4;clip-path:inset(0 0 100% 0)!important;padding:28px;}
+  .product-visual .prod-img,.prod-img-placeholder{width:100%;height:100%;max-height:none;border-radius:26px;}
   .product-panel.in .product-visual,.product-panel.in:nth-child(even) .product-visual{clip-path:inset(0 0 0% 0)!important;}
   .product-info,.product-panel:nth-child(even) .product-info{order:2;padding:40px 24px;}
   nav{padding:16px 20px;}
@@ -872,7 +885,7 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
       <span>Proceed to Payment</span>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>
     </button>
-    <button class="add-popup-secondary" onclick="closeAddPopup()">Continue Shopping</button>
+    <button class="add-popup-secondary" id="addPopupContinue">Continue Shopping</button>
   </div>
 </div>
 
@@ -887,6 +900,7 @@ footer{background:var(--charcoal);padding:26px 52px;display:flex;justify-content
 // ─── Configuration ───
 const API_BASE = '';
 let STRIPE_PUBLISHABLE_KEY = null;
+let STRIPE_MODE = 'unconfigured';
 let stripe = null;
 
 // ─── XSS Sanitizer [M2] ───
@@ -898,6 +912,41 @@ function sanitizeHtml(str) {
   // Fallback: escape HTML entities
   const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' };
   return String(str).replace(/[&<>"']/g, c => map[c]);
+}
+
+function decodeEntities(str) {
+  const textarea = document.createElement('textarea');
+  textarea.innerHTML = String(str || '');
+  return textarea.value;
+}
+
+function safeText(value) {
+  return sanitizeHtml(decodeEntities(value));
+}
+
+function safeAttr(value) {
+  return safeText(value).replace(/`/g, '&#x60;');
+}
+
+const PRODUCT_IMAGE_BY_ID = {
+  'prod-1': '/products/coco-queens-coconut-oil.png',
+  'prod-2': '/products/coco-queens-scrub.png',
+  'prod-3': '/products/coco-queens-honey.png',
+  'prod-4': '/products/coco-queens-essential-oil.png'
+};
+
+function safeImageSrc(src) {
+  const raw = String(src || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, window.location.origin);
+    if (url.origin === window.location.origin || url.protocol === 'https:') {
+      return url.href;
+    }
+  } catch (err) {
+    if (raw.startsWith('/')) return raw;
+  }
+  return '';
 }
 
 // ─── State ───
@@ -940,6 +989,7 @@ const checkoutBtn = $('checkoutBtn');
 const addPopup = $('addPopup');
 const addPopupOverlay = $('addPopupOverlay');
 const addPopupClose = $('addPopupClose');
+const addPopupContinue = $('addPopupContinue');
 const addPopupItems = $('addPopupItems');
 const addPopupTotal = $('addPopupTotal');
 const addPopupBtn = $('addPopupBtn');
@@ -1115,10 +1165,10 @@ function showAddPopup(product, qty) {
   addPopupItems.innerHTML = cart.map(item => `
     <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid rgba(201,169,110,0.15);">
       <div>
-        <div style="font-size:.85rem;font-weight:500;">${item.name}</div>
-        <div style="font-size:.7rem;color:var(--taupe);">Qty: ${item.qty}</div>
+        <div style="font-size:.85rem;font-weight:500;">${safeText(item.name)}</div>
+        <div style="font-size:.7rem;color:var(--taupe);">Qty: ${Math.max(1, Number(item.qty) || 1)}</div>
       </div>
-      <div style="font-family:'Playfair Display',serif;font-size:.9rem;">${fmtPrice(item.price * item.qty)}</div>
+      <div style="font-family:'Playfair Display',serif;font-size:.9rem;">${fmtPrice((Number(item.price) || 0) * (Number(item.qty) || 1))}</div>
     </div>
   `).join('');
 
@@ -1135,6 +1185,7 @@ function closeAddPopup() {
 }
 
 addPopupClose.addEventListener('click', closeAddPopup);
+addPopupContinue.addEventListener('click', closeAddPopup);
 addPopupOverlay.addEventListener('click', closeAddPopup);
 bagBtn.addEventListener('click', () => { if (cart.length > 0) showAddPopup(); });
 
@@ -1162,7 +1213,7 @@ function addToCart(product, qty = 1) {
   if (existing) {
     existing.qty += qty;
   } else {
-    cart.push({ id: product.id, name: product.name, price: product.price, qty, image: product.image || (Array.isArray(product.images) && product.images[0]) || '' });
+    cart.push({ id: product.id, name: product.name, price: product.price, qty, image: getProductImage(product) });
   }
   saveCart();
   showAddPopup(product, qty);
@@ -1223,28 +1274,86 @@ async function doStripeCheckout(itemsArray) {
 }
 
 addPopupBtn.addEventListener('click', () => {
-  const itemsArray = cart.map(i => ({ productId: i.id, name: i.name, price: i.price, quantity: i.qty }));
+  const itemsArray = cart.map(i => ({ productId: i.id, quantity: i.qty }));
+  doStripeCheckout(itemsArray);
+});
+
+checkoutBtn.addEventListener('click', () => {
+  const itemsArray = cart.map(i => ({ productId: i.id, quantity: i.qty }));
   doStripeCheckout(itemsArray);
 });
 
 // ═══════════════════════════════════════════════════════════════
 //  LOAD PRODUCTS
 // ═══════════════════════════════════════════════════════════════
+function showCheckoutMessage(title, message, isSuccess = false) {
+  const icon = isSuccess
+    ? '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>'
+    : '<circle cx="12" cy="12" r="9"/><path d="M12 7v5"/><path d="M12 16h.01"/>';
+  addPopupItems.innerHTML = `
+    <div style="text-align:center;padding:20px 0;color:var(--gold-dark);">
+      <svg style="width:48px;height:48px;stroke:var(--gold);fill:none;stroke-width:1.5;margin-bottom:12px;" viewBox="0 0 24 24">${icon}</svg><br>
+      ${safeText(title)}<br>
+      <span style="font-size:.75rem;color:var(--taupe);">${safeText(message)}</span>
+    </div>
+  `;
+  addPopupTotal.textContent = '';
+  addPopupBtn.style.display = 'none';
+  addPopup.classList.add('open');
+  addPopupOverlay.classList.add('open');
+  document.body.style.overflow = 'hidden';
+}
+
+async function handleStripeReturn(sessionId) {
+  showCheckoutMessage('Checking payment...', 'Confirming your Stripe checkout session.');
+  try {
+    const data = await api('/api/stripe/session-status/' + encodeURIComponent(sessionId));
+    if (data.paymentStatus === 'paid') {
+      showCheckoutMessage('Payment successful!', 'Your order is being processed. Thank you, Queen!', true);
+      cart = [];
+      saveCart();
+    } else {
+      showCheckoutMessage('Payment not completed yet', 'Stripe has not confirmed payment for this checkout session.');
+    }
+  } catch (err) {
+    showCheckoutMessage('Could not verify payment', err.message || 'Please check your order history or contact support.');
+  } finally {
+    window.history.replaceState({}, '', '/');
+  }
+}
+
 async function loadConfig() {
   try {
     const data = await api('/api/config');
     STRIPE_PUBLISHABLE_KEY = data.stripePublishableKey;
+    STRIPE_MODE = data.stripeMode || 'unconfigured';
     if (STRIPE_PUBLISHABLE_KEY) stripe = Stripe(STRIPE_PUBLISHABLE_KEY);
   } catch (err) {
     console.warn('Could not load config:', err);
   }
 }
 
+function getProductImage(product) {
+  const images = Array.isArray(product.images) ? product.images : [];
+  const primary = product.image || images.find(Boolean) || PRODUCT_IMAGE_BY_ID[product.id] || '';
+  return safeImageSrc(primary) || safeImageSrc(PRODUCT_IMAGE_BY_ID[product.id]);
+}
+
+function normalizeProduct(product) {
+  const image = getProductImage(product);
+  const images = Array.isArray(product.images) ? product.images.filter(Boolean) : [];
+  return {
+    ...product,
+    image,
+    images: image ? [image, ...images.filter(src => src !== image)] : images,
+  };
+}
+
 async function loadProducts() {
   try {
     const data = await api('/api/products');
-    products = data;
-    renderProducts(data);
+    products = (Array.isArray(data) ? data : []).map(normalizeProduct);
+    renderProducts(products);
   } catch (err) {
     console.error('Failed to load products:', err);
     products = getFallbackProducts();
@@ -1254,20 +1363,26 @@ async function loadProducts() {
 
 function getFallbackProducts() {
   return [
-    { id: 'prod-1', name: 'Extra Virgin Coconut Oil', description: 'Pure organic coconut oil for skin and hair nourishment.', benefits: 'Moisturizes, nourishes, strengthens hair', price: 10000, category: 'Oil', image: '' },
-    { id: 'prod-2', name: 'Exfoliating Coconut Scrub', description: 'Exfoliating body scrub with virgin coconut oil.', benefits: 'Exfoliates, softens, revitalizes', price: 30000, category: 'Body', image: '' },
-    { id: 'prod-3', name: 'Pure Raw Honey', description: 'Pure wild honey harvested from Tanzanian forests.', benefits: 'Antioxidant-rich, immune support', price: 22000, category: 'Wellness', image: '' },
-    { id: 'prod-4', name: 'Essential Oils', description: 'Aromatic essential oil blend with coconut and vanilla.', benefits: 'Aromatherapy, relaxation', price: 18000, category: 'Aromatherapy', image: '' }
-  ];
+    { id: 'prod-1', name: 'Extra Virgin Coconut Oil', description: 'Pure organic coconut oil for skin and hair nourishment.', benefits: 'Moisturizes, nourishes, strengthens hair', price: 10000, category: 'Oil', image: PRODUCT_IMAGE_BY_ID['prod-1'] },
+    { id: 'prod-2', name: 'Exfoliating Coconut Scrub', description: 'Exfoliating body scrub with virgin coconut oil.', benefits: 'Exfoliates, softens, revitalizes', price: 30000, category: 'Body', image: PRODUCT_IMAGE_BY_ID['prod-2'] },
+    { id: 'prod-3', name: 'Pure Raw Honey', description: 'Pure wild honey harvested from Tanzanian forests.', benefits: 'Antioxidant-rich, immune support', price: 22000, category: 'Wellness', image: PRODUCT_IMAGE_BY_ID['prod-3'] },
+    { id: 'prod-4', name: 'Essential Oils', description: 'Aromatic essential oil blend with coconut and vanilla.', benefits: 'Aromatherapy, relaxation', price: 18000, category: 'Aromatherapy', image: PRODUCT_IMAGE_BY_ID['prod-4'] }
+  ].map(normalizeProduct);
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  PRODUCT IMAGE FALLBACK
 // ═══════════════════════════════════════════════════════════════
 function onProdImgError(imgEl) {
+  const fallbackSrc = safeImageSrc(imgEl.dataset.fallbackSrc);
+  if (fallbackSrc && imgEl.src !== fallbackSrc) {
+    imgEl.src = fallbackSrc;
+    imgEl.removeAttribute('data-fallback-src');
+    return;
+  }
   const placeholder = document.createElement('div');
   placeholder.className = 'prod-img-placeholder';
-  placeholder.textContent = imgEl.dataset.name || '';
+  placeholder.textContent = decodeEntities(imgEl.dataset.name || '');
   imgEl.replaceWith(placeholder);
 }
 
@@ -1275,20 +1390,26 @@ function renderProducts(prods) {
   if (!prods || prods.length === 0) prods = getFallbackProducts();
 
   productsContainer.innerHTML = prods.map((p, i) => {
-    const imgSrc = p.image || (Array.isArray(p.images) && p.images[0]) || '';
+    const imgSrc = getProductImage(p);
+    const fallbackSrc = safeImageSrc(PRODUCT_IMAGE_BY_ID[p.id]);
+    const id = safeAttr(p.id);
+    const name = safeText(p.name || 'Coco Queens product');
+    const category = safeText(p.category || 'Signature');
+    const description = safeText(p.description || '');
+    const benefits = safeText(p.benefits || '');
     return `
     <div class="product-panel" id="p${i + 1}">
       <div class="product-visual">
         ${imgSrc
-          ? `<img class="prod-img" src="${imgSrc}" alt="${p.name}" loading="lazy" data-name="${p.name}"/>`
-          : `<div class="prod-img-placeholder">${p.name}</div>`
+          ? `<img class="prod-img" src="${safeAttr(imgSrc)}" alt="${name}" loading="lazy" data-name="${name}" data-fallback-src="${safeAttr(fallbackSrc)}"/>`
+          : `<div class="prod-img-placeholder">${name}</div>`
         }
       </div>
       <div class="product-info">
-        <div class="prod-tag">${p.category || 'Signature'}</div>
-        <h2 class="prod-name">${p.name}</h2>
-        <p class="prod-desc">${p.description || ''}</p>
-        ${p.benefits ? `<p class="prod-benefits"><strong>Benefits:</strong> ${p.benefits}</p>` : ''}
+        <div class="prod-tag">${category}</div>
+        <h2 class="prod-name">${name}</h2>
+        <p class="prod-desc">${description}</p>
+        ${benefits ? `<p class="prod-benefits"><strong>Benefits:</strong> ${benefits}</p>` : ''}
         <div class="price-block">
           <div class="prod-price">${fmtPrice(p.price)}</div>
           <div class="prod-price-label">Free shipping on orders over TSh 100,000</div>
@@ -1296,15 +1417,15 @@ function renderProducts(prods) {
         <div class="qty-row">
           <span class="qty-label">Qty</span>
           <button class="qty-btn" data-qty-id="${p.id}" data-qty-delta="-1">−</button>
-          <span class="qty-val" id="qty-${p.id}">1</span>
-          <button class="qty-btn" data-qty-id="${p.id}" data-qty-delta="1">+</button>
+          <span class="qty-val" id="qty-${id}">1</span>
+          <button class="qty-btn" data-qty-id="${id}" data-qty-delta="1">+</button>
         </div>
         <div style="display:flex;gap:12px;flex-wrap:wrap;">
-          <button class="prod-btn" data-add-id="${p.id}">
+          <button class="prod-btn" data-add-id="${id}">
             <span>Add to bag</span>
             <div class="prod-btn-arrow"></div>
           </button>
-          <button class="prod-btn buy-now-btn" data-buy-id="${p.id}">
+          <button class="prod-btn buy-now-btn" data-buy-id="${id}">
             <span>Buy now</span>
             <div class="prod-btn-arrow"></div>
           </button>
@@ -1344,7 +1465,7 @@ function renderProducts(prods) {
       if (!prod) return;
       const qty = parseInt(document.getElementById('qty-' + id)?.textContent || '1');
       if (!currentUser) { openAuth('login'); return; }
-      doStripeCheckout([{ productId: prod.id, name: prod.name, price: prod.price, quantity: qty }]);
+      doStripeCheckout([{ productId: prod.id, quantity: qty }]);
       return;
     }
     // Qty buttons (replaces inline onclick)
@@ -1389,17 +1510,14 @@ async function init() {
 
   // Check for Stripe success
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('session_id')) {
-    // Show the popup with success message
-    addPopupItems.innerHTML = '<div style="text-align:center;padding:20px 0;color:var(--gold-dark);"><svg style="width:48px;height:48px;stroke:var(--gold);fill:none;stroke-width:1.5;margin-bottom:12px;" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg><br>Payment successful!<br><span style="font-size:.75rem;color:var(--taupe);">Your order is being processed. Thank you, Queen!</span></div>';
-    addPopupTotal.textContent = '';
-    addPopupBtn.style.display = 'none';
-    addPopup.classList.add('open');
-    addPopupOverlay.classList.add('open');
-    document.body.style.overflow = 'hidden';
-    cart = [];
-    saveCart();
-    window.history.replaceState({}, '', '/');
+  const sessionId = urlParams.get('session_id');
+  if (sessionId) {
+    if (currentUser) {
+      await handleStripeReturn(sessionId);
+    } else {
+      showCheckoutMessage('Sign in to verify payment', 'Please sign in, then open your order history to confirm checkout status.');
+      window.history.replaceState({}, '', '/');
+    }
   } else {
     addPopupBtn.style.display = 'flex';
   }

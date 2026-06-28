@@ -17,7 +17,7 @@ export default function Hero({ onShopClick, onBlogClick }: HeroProps) {
     <section className="relative min-h-[calc(100vh-112px)] overflow-hidden bg-[#090604] text-[#FFF7E8]">
       <motion.img
         style={{ y: imageY }}
-        src="/products/coco-queens-coconut-oil.jpg"
+        src="/products/coco-queens-coconut-oil.png"
         alt="Coco Queens coconut oil bottles"
         className="absolute inset-0 h-[115%] w-full object-cover opacity-75"
       />

@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="public/products/coco-queens-coconut-oil.jpg">
-    <img width="800" alt="Coco Queens — Pure organic beauty" src="public/products/coco-queens-coconut-oil.jpg" style="border-radius:12px;max-width:100%;">
+    <source media="(prefers-color-scheme: dark)" srcset="public/products/coco-queens-coconut-oil.png">
+    <img width="800" alt="Coco Queens — Pure organic beauty" src="public/products/coco-queens-coconut-oil.png" style="border-radius:12px;max-width:100%;">
   </picture>
 </div>
 
@@ -71,11 +71,19 @@ See [.env.example](.env.example) for the full list. Required:
 | Variable | Description |
 |----------|-------------|
 | `DATABASE_URL` | Postgres connection string |
-| `STRIPE_SECRET_KEY` | Stripe secret key (test mode) |
-| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key |
+| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_` for test mode, `sk_live_` for real charges) |
+| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key matching the secret key mode |
+| `STRIPE_WEBHOOK_SECRET` | Stripe webhook signing secret for payment confirmation |
+| `TZS_PER_USD` | TSh-to-USD conversion rate used by Stripe Checkout |
 | `HMAC_SECRET` | Secret for request signing |
 | `OWNER_BOOTSTRAP_PASSWORD` | Initial owner account password |
 | `ADMIN_BOOTSTRAP_PASSWORD` | Initial admin account password |
+
+## Stripe Payments
+
+Stripe Checkout is not a UI-only simulation. The server creates real Stripe Checkout Sessions when `STRIPE_SECRET_KEY` and `STRIPE_PUBLISHABLE_KEY` are configured. If the keys start with `sk_test_` / `pk_test_`, payments run in Stripe test mode. If they start with `sk_live_` / `pk_live_`, Stripe can process real card payments.
+
+The checkout route now prices products from the database instead of trusting browser-submitted prices, records a pending order with Stripe metadata, and verifies the returned `session_id` with Stripe before showing the success message.
 
 ## Security
 

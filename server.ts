@@ -17,6 +17,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY) : null;
 const APP_URL = process.env.APP_URL || `http://localhost:${PORT}`;
+const TZS_PER_USD = Number(process.env.TZS_PER_USD || 2500);
 
 // ---- Request ID middleware (tracing) ----
 app.use((req, res, next) => {
@@ -47,7 +48,7 @@ app.use(
           'https://js.stripe.com',
           'https://js.stripe.com/v3',
         ],
-        scriptSrcAttr: ["'unsafe-inline'"],
+        scriptSrcAttr: ["'none'"],
         frameSrc: ["'self'", 'https://js.stripe.com', 'https://hooks.stripe.com'],
         connectSrc: ["'self'", 'https://api.stripe.com'],
         objectSrc: ["'none'"],
@@ -169,6 +170,29 @@ const VALIDATION = {
   PRODUCT_NAME_MAX: 200,
   PRODUCT_DESC_MAX: 5000,
 } as const;
+
+function getStripeMode(): 'live' | 'test' | 'unconfigured' | 'unknown' {
+  const publishable = process.env.STRIPE_PUBLISHABLE_KEY || '';
+  if (STRIPE_SECRET_KEY.startsWith('sk_live_') || publishable.startsWith('pk_live_')) return 'live';
+  if (STRIPE_SECRET_KEY.startsWith('sk_test_') || publishable.startsWith('pk_test_')) return 'test';
+  if (!STRIPE_SECRET_KEY && !publishable) return 'unconfigured';
+  return 'unknown';
+}
+
+function toStripeUsdCents(tzsPrice: number): number {
+  const exchangeRate = Number.isFinite(TZS_PER_USD) && TZS_PER_USD > 0 ? TZS_PER_USD : 2500;
+  return Math.max(Math.round((Number(tzsPrice) / exchangeRate) * 100), 50);
+}
+
+function toPublicStripeImageUrl(src?: string): string | undefined {
+  if (!src) return undefined;
+  try {
+    const url = new URL(src, APP_URL);
+    return url.protocol === 'https:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // --- SECURITY HELPER FOR PASSWORDS ---
 // Uses bcrypt (with automatic salt) for new hashes.
@@ -994,6 +1018,7 @@ app.get('/api/profile/gdpr-export', authenticateUser, asyncRoute(async (req: Aut
 app.get('/api/config', asyncRoute(async (req, res) => {
   res.json({
     stripePublishableKey: process.env.STRIPE_PUBLISHABLE_KEY || '',
+    stripeMode: getStripeMode(),
   });
 }));
 
@@ -1008,27 +1033,55 @@ app.post('/api/stripe/create-checkout-session', authenticateUser, asyncRoute(asy
     return res.status(400).json({ error: 'Cart is empty.' });
   }
 
-  // Validate items against database
+  if (!await checkRateLimit(`stripe-checkout-${req.user!.id}`, 20, 10 * 60 * 1000)) {
+    return res.status(429).json({ error: 'Too many checkout attempts. Please wait before trying again.' });
+  }
+
+  // Validate items against the database and price exclusively from trusted data.
   const lineItems: Array<{ price_data: any; quantity: number }> = [];
+  const verifiedItems: Array<{ productId: string; name: string; price: number; quantity: number; isRecurring?: boolean }> = [];
+  let subtotal = 0;
+
   for (const item of items) {
-    if (!item.productId || !item.name || !item.price || !item.quantity) {
+    if (!item.productId || !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 20) {
       return res.status(400).json({ error: `Invalid item: ${item.name || 'unknown'}` });
     }
-    const product = await db.getProductById(item.productId).catch(() => null);
-    // Convert TZS to USD cents (rate: 2500 TZS = 1 USD)
-    const usdCents = Math.round(item.price / 2500 * 100);
+    const product = await db.getProductById(item.productId);
+    if (!product || product.status !== 'Published') {
+      return res.status(400).json({ error: `Product ${item.productId} is not available.` });
+    }
+    if (product.stock < item.quantity) {
+      return res.status(409).json({ error: `Insufficient stock on ${product.name}. Only ${product.stock} items exist.` });
+    }
+
+    subtotal += product.price * item.quantity;
+    verifiedItems.push({
+      productId: product.id,
+      name: product.name,
+      price: product.price,
+      quantity: item.quantity,
+      isRecurring: !!product.isRecurring,
+    });
+
+    const productImage = toPublicStripeImageUrl(Array.isArray(product.images) ? product.images[0] : undefined);
+    const productData: Stripe.Checkout.SessionCreateParams.LineItem.PriceData.ProductData = {
+      name: product.name,
+      description: product.description || undefined,
+    };
+    if (productImage) productData.images = [productImage];
+
     lineItems.push({
       price_data: {
         currency: 'usd',
-        product_data: {
-          name: product?.name || item.name,
-          description: product?.description || '',
-        },
-        unit_amount: Math.max(usdCents, 50), // minimum 50 cents
+        product_data: productData,
+        unit_amount: toStripeUsdCents(product.price),
       },
-      quantity: Math.min(Math.max(1, item.quantity), 20),
+      quantity: item.quantity,
     });
   }
+
+  const orderId = 'ord-' + crypto.randomBytes(6).toString('hex').toUpperCase();
+  const total = Number(subtotal.toFixed(2));
 
   try {
     const session = await stripe!.checkout.sessions.create({
@@ -1039,16 +1092,76 @@ app.post('/api/stripe/create-checkout-session', authenticateUser, asyncRoute(asy
       cancel_url: `${APP_URL}`,
       shipping_address_collection: { allowed_countries: ['TZ'] },
       metadata: {
+        orderId,
         user_id: req.user?.id || 'guest',
         user_email: req.user?.email || 'guest',
       },
     });
 
-    res.json({ sessionId: session.id, url: session.url });
+    let pendingOrder;
+    try {
+      pendingOrder = await db.createOrderTransactional({
+        id: orderId,
+        userId: req.user!.id,
+        userEmail: req.user!.email,
+        items: verifiedItems,
+        subtotal,
+        discount: 0,
+        pointsEarned: Math.floor(total / 1000),
+        pointsRedeemed: 0,
+        total,
+        shippingAddress: {
+          provider: 'stripe_checkout',
+          note: 'Shipping address is collected by Stripe Checkout.',
+        },
+        paymentMethodId: 'stripe:checkout_pending',
+        paymentStatus: 'Pending',
+        shippingStatus: 'Pending',
+      });
+    } catch (err) {
+      await stripe!.checkout.sessions.expire(session.id).catch((expireErr) => {
+        console.error('Failed to expire Stripe session after order reservation failure:', expireErr);
+      });
+      throw err;
+    }
+
+    res.json({ sessionId: session.id, url: session.url, orderId: pendingOrder.id });
   } catch (err: any) {
+    if (err.code === 'OUT_OF_STOCK') {
+      return res.status(409).json({
+        error: 'One or more items sold out while you were checking out. Please review your cart and try again.',
+        productId: err.productId,
+      });
+    }
     console.error('Stripe session creation failed:', err);
     res.status(500).json({ error: err.message || 'Failed to create payment session' });
   }
+}));
+
+app.get('/api/stripe/session-status/:sessionId', authenticateUser, asyncRoute(async (req: AuthenticatedRequest, res) => {
+  if (!stripe) {
+    return res.status(503).json({ error: 'Stripe is not configured. Set STRIPE_SECRET_KEY in .env' });
+  }
+
+  const sessionId = String(req.params.sessionId || '');
+  if (!/^cs_(test|live)_[A-Za-z0-9]+$/.test(sessionId)) {
+    return res.status(400).json({ error: 'Invalid Stripe session id.' });
+  }
+
+  const session = await stripe.checkout.sessions.retrieve(sessionId);
+  if (session.metadata?.user_id !== req.user!.id) {
+    return res.status(403).json({ error: 'This checkout session belongs to another user.' });
+  }
+
+  if (session.metadata?.orderId && session.payment_status === 'paid') {
+    await db.updateOrderPaymentStatus(session.metadata.orderId, 'Paid');
+  }
+
+  res.json({
+    status: session.status,
+    paymentStatus: session.payment_status,
+    orderId: session.metadata?.orderId || '',
+  });
 }));
 
 // ---- STATIC FILES & SPA SERVING ----
